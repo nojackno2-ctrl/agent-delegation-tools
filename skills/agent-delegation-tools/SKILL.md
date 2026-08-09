@@ -34,14 +34,16 @@ Delegate one clearly scoped task to an isolated CLI subagent process on Windows.
 ## 3. Invoke the Subagent
 
 Resolve the wrappers once. The delegation checkout is the source of truth; a globally installed copy
-of this skill falls back to the scripts bundled beside it:
+of this skill falls back to the scripts bundled beside it, honouring `CODEX_HOME` when it is set.
+(Do not use `$PSScriptRoot` here - these snippets run as inline commands, where it is empty.)
 
 ```powershell
 $repoRoot = 'C:\離線儲存\程式設計\子代理'
 $wrapperRoot = if (Test-Path -LiteralPath (Join-Path $repoRoot 'delegate.ps1')) {
     $repoRoot
 } else {
-    Join-Path $PSScriptRoot 'scripts'   # installed skill: <skill dir>\scripts\
+    $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
+    Join-Path $codexHome 'skills\agent-delegation-tools\scripts'
 }
 ```
 
