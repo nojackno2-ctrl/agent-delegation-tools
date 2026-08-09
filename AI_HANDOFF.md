@@ -6,7 +6,7 @@ Refresh the GitHub repository landing page so it accurately documents the implem
 
 ## Current state
 
-- Branch: `master`, tracking private GitHub repository `nojackno2-ctrl/agent-delegation-tools`.
+- Branch: `codex/update-github-readme`, tracking `origin/codex/update-github-readme` in private GitHub repository `nojackno2-ctrl/agent-delegation-tools`.
 - Existing tool: `codex.ps1`, a Windows wrapper around non-interactive Codex CLI execution with non-ASCII workspace junction handling.
 - The repository did not previously contain a Codex skill package.
 - The first `init_skill.py` attempt failed before creating files because `python` is not available on PATH; use an available Python launcher/runtime instead.
@@ -28,6 +28,8 @@ Refresh the GitHub repository landing page so it accurately documents the implem
 - README validation passed: UTF-8 contained no replacement characters, Markdown had balanced code fences, both PowerShell entry points parsed with zero errors, `git diff --check` passed, and a temporary install/update simulation produced all 3 expected skill files without nesting the directory.
 - Local commit `b2bc8e8` (`Refresh GitHub landing page`) was created. The first push attempt was rejected by the safety reviewer because explicit approval is required to transmit the README and `AI_HANDOFF.md` contents to the private GitHub repository; no remote mutation occurred.
 - The user then explicitly authorized the push. Host-context `gh auth status` confirmed the active `nojackno2-ctrl` account with repository access.
+- Commits `b2bc8e8` and `6261df0` were pushed to `origin/codex/update-github-readme`.
+- The GitHub connector could not access the private repository and returned HTTP 404. Authenticated `gh pr create` succeeded as the documented fallback, creating draft PR #1: `https://github.com/nojackno2-ctrl/agent-delegation-tools/pull/1`.
 
 ## Constraints
 
@@ -38,5 +40,5 @@ Refresh the GitHub repository landing page so it accurately documents the implem
 
 ## Next steps
 
-- Commit this latest handoff note, push `codex/update-github-readme`, and open a draft pull request targeting `master`.
+- Review draft PR #1 and merge it when the README wording is accepted.
 - Do not describe Claude Code or Antigravity integration as released until their files and validation evidence are actually present in the repository.
