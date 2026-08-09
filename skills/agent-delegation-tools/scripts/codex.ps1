@@ -106,5 +106,5 @@ if ($Json)         { $codexArgs += '--json' }
 if ($SkipGitCheck) { $codexArgs += '--skip-git-repo-check' }
 $codexArgs += $Prompt
 
-& $codex.FullName @codexArgs
+$null | & $codex.FullName @codexArgs
 exit $LASTEXITCODE
