@@ -16,18 +16,41 @@
 - `agy.exe` — `%LOCALAPPDATA%\agy\bin\agy.exe`（v1.1.11），已在 PATH 上。模型清單用 `agy models` 查，會隨版本變
 - `cc-antigravity-plugin` — Claude Code plugin，user scope，提供 `/cc-antigravity-plugin:antigravity` 與 `antigravity-coder` / `antigravity-agent` 兩個子代理
 
+## 讓 Codex 使用
+
+倉庫內的 `skills/agent-delegation-tools` 是可安裝的 Codex skill。從本倉庫根目錄安裝：
+
+```powershell
+$skillSource = Resolve-Path '.\skills\agent-delegation-tools'
+$skillDestination = Join-Path $env:USERPROFILE '.codex\skills\agent-delegation-tools'
+if (Test-Path -LiteralPath $skillDestination) {
+    throw "Skill already exists: $skillDestination"
+}
+Copy-Item -LiteralPath $skillSource -Destination $skillDestination -Recurse
+```
+
+安裝後從下一個 Codex task 起可用；明確呼叫方式：
+
+```text
+$agent-delegation-tools 把這個有明確邊界的工作交給一個獨立 Codex CLI worker
+```
+
+skill 只在使用者明確要求委派、外部 agent 要呼叫 Codex，或 Windows 非 ASCII 工作目錄需要 junction 修正時使用。一般程式工作直接由目前的 Codex 完成；若 Codex 原生子代理可用且使用者要求子代理或平行工作，優先使用原生協作工具，避免不必要的 Codex 套 Codex。
+
 ## codex.ps1
 
 ```powershell
 # 對當前目錄的專案
-.\codex.ps1 "把 app/world.mjs 的 X 重構成 Y"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\codex.ps1 "把 app/world.mjs 的 X 重構成 Y"
 
 # 指定專案
-.\codex.ps1 -WorkDir "C:\離線儲存\程式設計\Aperture World" "..."
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\codex.ps1 -WorkDir "C:\離線儲存\程式設計\Aperture World" "..."
 
 # 純分析，不讓它動檔案
-.\codex.ps1 -Sandbox read-only "說明 app/scene3d.mjs 怎麼組場景"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\codex.ps1 -Sandbox read-only "說明 app/scene3d.mjs 怎麼組場景"
 ```
+
+`ExecutionPolicy Bypass` 只套用在這一次 PowerShell 程序，不會修改系統或使用者的全域 execution policy。
 
 其他旗標：`-Model`、`-Effort`、`-OutFile <path>`、`-Json`、`-SkipGitCheck`、`-NoAliasPath`。
 
