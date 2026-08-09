@@ -2,7 +2,7 @@
 
 ## Objective
 
-Make the delegation skill usable from Codex, Claude Code, and Antigravity while preserving the existing `codex.ps1` workflow. Validate the Claude and Antigravity integrations by invoking each external agent sequentially.
+Refresh the GitHub repository landing page so it accurately documents the implementation currently present in the repository, then publish the change through a draft pull request.
 
 ## Current state
 
@@ -22,6 +22,10 @@ Make the delegation skill usable from Codex, Claude Code, and Antigravity while 
 - Attempting to invoke Claude Code with repository access was rejected before execution because the private repository contents could be transmitted to Anthropic. No Claude changes were made. Explicit user approval of private-code transmission to Anthropic and Google Antigravity is required before invoking either external agent.
 - The user clarified that the canonical project checkout is `C:\離線儲存\程式設計\子代理`. The validated Codex-skill work was reconciled into that checkout from the Documents clone; all seven synchronized files matched source SHA-256 hashes.
 - The user subsequently gave informed approval to continue with both external agents after the private-code transmission risk was explained.
+- For the current GitHub-page refresh, branch `codex/update-github-readme` was created from the clean, synchronized `master` branch.
+- `README.md` was rewritten as a focused Traditional Chinese landing page for the verified Codex skill/wrapper. It now documents prerequisites, installation and update behavior, direct usage, parameters, non-ASCII junction handling, safety boundaries, and project structure.
+- The README now labels Claude Code and Antigravity integration as not yet included instead of presenting local machine tooling or pending work as released repository functionality.
+- README validation passed: UTF-8 contained no replacement characters, Markdown had balanced code fences, both PowerShell entry points parsed with zero errors, `git diff --check` passed, and a temporary install/update simulation produced all 3 expected skill files without nesting the directory.
 
 ## Constraints
 
@@ -32,7 +36,5 @@ Make the delegation skill usable from Codex, Claude Code, and Antigravity while 
 
 ## Next steps
 
-- Invoke Claude Code to add and verify its own skill integration without disturbing the existing Codex work.
-- Review Claude's diff and verification, then invoke Antigravity to add and verify its own integration.
-- Re-run parent-side validation and reinstall any updated Codex skill files if necessary.
-- Do not commit or push unless the user explicitly asks.
+- Commit the README and handoff update, push `codex/update-github-readme`, and open a draft pull request targeting `master` as authorized by the GitHub-page update request.
+- Do not describe Claude Code or Antigravity integration as released until their files and validation evidence are actually present in the repository.
