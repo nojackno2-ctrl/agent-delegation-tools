@@ -26,6 +26,8 @@ Refresh the GitHub repository landing page so it accurately documents the implem
 - `README.md` was rewritten as a focused Traditional Chinese landing page for the verified Codex skill/wrapper. It now documents prerequisites, installation and update behavior, direct usage, parameters, non-ASCII junction handling, safety boundaries, and project structure.
 - The README now labels Claude Code and Antigravity integration as not yet included instead of presenting local machine tooling or pending work as released repository functionality.
 - README validation passed: UTF-8 contained no replacement characters, Markdown had balanced code fences, both PowerShell entry points parsed with zero errors, `git diff --check` passed, and a temporary install/update simulation produced all 3 expected skill files without nesting the directory.
+- Local commit `b2bc8e8` (`Refresh GitHub landing page`) was created. The first push attempt was rejected by the safety reviewer because explicit approval is required to transmit the README and `AI_HANDOFF.md` contents to the private GitHub repository; no remote mutation occurred.
+- The user then explicitly authorized the push. Host-context `gh auth status` confirmed the active `nojackno2-ctrl` account with repository access.
 
 ## Constraints
 
@@ -36,5 +38,5 @@ Refresh the GitHub repository landing page so it accurately documents the implem
 
 ## Next steps
 
-- Commit the README and handoff update, push `codex/update-github-readme`, and open a draft pull request targeting `master` as authorized by the GitHub-page update request.
+- Commit this latest handoff note, push `codex/update-github-readme`, and open a draft pull request targeting `master`.
 - Do not describe Claude Code or Antigravity integration as released until their files and validation evidence are actually present in the repository.
