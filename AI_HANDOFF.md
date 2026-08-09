@@ -150,5 +150,15 @@ Make the delegation skill usable from Codex, Claude Code, and Antigravity while 
 - A copy bug worth remembering: `Copy-Item -LiteralPath '...\*.ps1'` silently copies nothing because `-LiteralPath` does not expand wildcards. The README's old AGY sync snippet had exactly this bug; the new unified install snippet uses `-Path` and comments the trap.
 - `README.md` "讓各 Agent 載入 Skill" was replaced with an adapter-source table plus one snippet that syncs all five install locations.
 
+## History reconciliation and salvage (this session)
+
+- `origin/master` held `24c8488` ("Delegate codex.ps1 through the installable agent delegation skill", the Codex-only stage), which local `master` had never contained - the multi-backend work had branched from `8cea524` instead, so the two lines had diverged.
+- Resolved by rebasing the multi-backend commit onto `origin/master` (`617188b` → `7562725`). Four add/add conflicts (`AI_HANDOFF.md`, `README.md`, canonical `SKILL.md`, `scripts/codex.ps1`) were all resolved in favour of the newer local versions; verified afterwards that the resulting tree is byte-identical to the pre-rebase commit (`git diff 617188b HEAD` empty). Notably `origin`'s `scripts/codex.ps1` still lacked the stdin fix.
+- Salvaged from the superseded revision:
+  - README regained the CLI install-location notes (`codex.exe` under a per-update hash folder, `agy.exe` in `%LOCALAPPDATA%\agy\bin`, the `cc-antigravity-plugin` distinction), extended with `claude.exe` at `%USERPROFILE%\.local\bin` and the `.cmd`-shim behaviour.
+  - The canonical `SKILL.md` wrapper-resolution fallback again honours `$env:CODEX_HOME` instead of assuming `~/.codex`.
+- Fixed while restoring that: the fallback previously used `$PSScriptRoot`, which is **empty** when these snippets run as inline commands rather than from a script file - it would have silently resolved to `scripts` relative to the cwd. Both branches of the resolver are now absolute.
+- Verified: `CODEX_HOME` set and unset both resolve to an existing `delegate.ps1`; 15 PowerShell fences across README and every SKILL.md parse with 0 AST errors; the reinstalled `~/.codex` SKILL.md hash matches source and `quick_validate.py` still reports `Skill is valid!`.
+
 
 

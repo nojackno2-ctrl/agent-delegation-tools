@@ -15,6 +15,15 @@
 | **Claude Code** | `claude.ps1` | 深入程式碼探索、安全性審查、架構對齊；可續談的多輪 worker | `sonnet` / `opus` | Anthropic Claude |
 | **統一調度器** | `delegate.ps1` | 依任務類型自動路由：`analysis`/`scaffolding` → AGY、`review` → Claude、`implementation` → Codex | 自動選型 | 依選用後端 |
 
+### 三個 CLI 在這台機器上的安裝位置
+
+除了 PATH 之外都不需要另外設定，wrapper 會自己解析：
+
+- `codex.exe` — `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe`。hash 資料夾每次更新都會變，所以 `codex.ps1` 是呼叫當下才去找最新的那支，不寫死路徑。
+- `agy.exe` — `%LOCALAPPDATA%\agy\bin\agy.exe`，已在 PATH 上。模型清單用 `agy models` 查，會隨版本變動，不要照抄舊筆記。
+- `claude.exe` — `%USERPROFILE%\.local\bin\claude.exe`（原生安裝）。`claude.ps1` 先找 PATH，再退回這個路徑；若是 npm 安裝的 `claude.cmd`，會自動改走 `cmd.exe` 啟動。
+- `cc-antigravity-plugin` — Claude Code plugin（user scope），提供 `/cc-antigravity-plugin:antigravity` 指令與 `antigravity-coder` / `antigravity-agent` 兩個內建子代理。跟本倉庫的 `agy.ps1` 是兩條不同的路徑：plugin 走 bridge，`agy.ps1` 直接叫 `agy.exe`。
+
 ---
 
 ## 快速使用 (CLI 腳本)
