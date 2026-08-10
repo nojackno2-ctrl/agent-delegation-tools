@@ -1,117 +1,185 @@
-# 子代理 (Agent Delegation Tools)
+# 子代理調度工具箱 (Agent Delegation Tools)
 
-把外部 AI Agent CLI 接成獨立子代理（Subagent）的工具庫、調度器與最佳實踐。
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-blue.svg)](https://www.microsoft.com/windows)
+[![Shell](https://img.shields.io/badge/PowerShell-5.1%20%7C%207%2B-blue.svg)](https://github.com/PowerShell/PowerShell)
+[![Supported Agents](https://img.shields.io/badge/Supported%20Agents-Antigravity%20%7C%20Codex%20%7C%20Claude%20Code-brightgreen.svg)](#三大子代理後端與調度矩陣)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-支援 **Antigravity CLI (`agy`)**、**OpenAI Codex CLI** 與 **Claude Code** 三大 AI Agent 後端，提供跨代理調派、多後端智慧路由、Windows 非 ASCII 沙箱路徑修復、UTF-8 編碼保證與 stdin 防阻塞機制。
+**Agent Delegation Tools** 是一套專為 Windows 環境打造的跨代理外部子代理（Subagent）調度框架與 CLI 工具庫。
+
+讓你的主 AI Agent（無論是 **Google Antigravity**、**OpenAI Codex** 或 **Anthropic Claude Code**）能夠將複雜實作、大型架構分析、深度代碼審查等特定任務，無縫且安全地委派給獨立的外部 CLI 處理進程。
 
 ---
 
-## 三大子代理後端與調度器
+## 為什麼需要 Agent Delegation Tools？
 
-| 後端 / 工具 | 呼叫腳本 | 核心專長 / 適用情境 | 預設模型 | 額度消耗 |
+在現代 AI 輔助開發中，讓單一主代理處理所有工作容易遭遇脈絡污染、Token 消耗劇增、或受限於單一模型的專長短板。然而，在 Windows 上調用外部 Agent CLI 進程時，往往會踩進許多系統級地雷：
+
+- ⚠️ **Windows 中文/非 ASCII 路徑沙箱失效**：Codex CLI 沙箱遇到非 ASCII 路徑會默默重定向至 `C:\`，導致相對路徑與 Git 全部失效。
+- ⚠️ **PowerShell 與 Stdin 阻塞卡死**：外部 CLI 進程若等待互動式 stdin 輸入，會導致父進程或自動化腳本永久懸掛。
+- ⚠️ **Windows 終端編碼亂碼**：Windows 預設 CP950/ANSI 編碼常使外部 Agent 輸出的中文變為亂碼。
+- ⚠️ **母進程脈絡重複載入 (Token 爆炸)**：Claude 等 Agent 預設會載入所有全域 Plugin、Skill、Hook 與 MCP，使一次委派就消耗近 50,000 Prompt Tokens。
+
+本專案透過四支 PowerShell 封裝核心腳本與統一 Skill 適配器，徹底解決上述所有痛點。
+
+---
+
+## 三大子代理後端與調度矩陣
+
+| 後端 / 工具 | 核心腳本 | 核心專長與適用情境 | 預設模型 | 額度消耗來源 |
 |---|---|---|---|---|
-| **Antigravity CLI (AGY)** | `agy.ps1` | 超長上下文閱讀、快速 Scaffolding、架構分析、Plan 模式規劃 | `gemini-3.6-flash-low` (可選 Pro / Claude / GPT-OSS) | Google Antigravity |
-| **Codex CLI** | `codex.ps1` | 複雜多檔案實作、重構、強實作者（內建 Windows 中文路徑 Junction 修復） | `gpt-5.6-sol` (可選 o-series) | ChatGPT / OpenAI |
-| **Claude Code** | `claude.ps1` | 深入程式碼探索、安全性審查、架構對齊；可續談的多輪 worker | `sonnet` / `opus` | Anthropic Claude |
-| **統一調度器** | `delegate.ps1` | 依任務類型自動路由：`analysis`/`scaffolding` → AGY、`review` → Claude、`implementation` → Codex | 自動選型 | 依選用後端 |
+| **Google Antigravity CLI** | [`agy.ps1`](file:///c:/離線儲存/程式設計/子代理/agy.ps1) | 超長上下文閱讀、快速 Scaffolding、架構模組分析、Plan 模式規劃 | `gemini-3.6-flash-low` (可選 Pro / Claude / GPT) | Google Antigravity |
+| **OpenAI Codex CLI** | [`codex.ps1`](file:///c:/離線儲存/程式設計/子代理/codex.ps1) | 跨多檔案複雜實作、大型重構、重度編碼（內建 Windows 中文路徑 Junction 修復） | `gpt-5.6-sol` (可選 o-series) | OpenAI / ChatGPT |
+| **Anthropic Claude Code** | [`claude.ps1`](file:///c:/離線儲存/程式設計/子代理/claude.ps1) | 深度邏輯審查、安全邊界掃描、架構對齊；支援工作階段接續（Resume） | `sonnet` / `opus` | Anthropic Claude |
+| **統一智慧調度器** | [`delegate.ps1`](file:///c:/離線儲存/程式設計/子代理/delegate.ps1) | 依任務類型自動路由：`analysis`/`scaffolding` → AGY，`review` → Claude，`implementation` → Codex | 依任務自動選型 | 依選用後端 |
 
-### 三個 CLI 在這台機器上的安裝位置
+### 本機 CLI 安裝路徑動態解析
 
-除了 PATH 之外都不需要另外設定，wrapper 會自己解析：
-
-- `codex.exe` — `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe`。hash 資料夾每次更新都會變，所以 `codex.ps1` 是呼叫當下才去找最新的那支，不寫死路徑。
-- `agy.exe` — `%LOCALAPPDATA%\agy\bin\agy.exe`，已在 PATH 上。模型清單用 `agy models` 查，會隨版本變動，不要照抄舊筆記。
-- `claude.exe` — `%USERPROFILE%\.local\bin\claude.exe`（原生安裝）。`claude.ps1` 先找 PATH，再退回這個路徑；若是 npm 安裝的 `claude.cmd`，會自動改走 `cmd.exe` 啟動。
-- `cc-antigravity-plugin` — Claude Code plugin（user scope），提供 `/cc-antigravity-plugin:antigravity` 指令與 `antigravity-coder` / `antigravity-agent` 兩個內建子代理。跟本倉庫的 `agy.ps1` 是兩條不同的路徑：plugin 走 bridge，`agy.ps1` 直接叫 `agy.exe`。
+所有腳本均具備智慧定位能力，無需手動寫死路徑：
+- `codex.exe`：自動搜尋 `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe` 最新版本（每次更新 hash 變更皆能自適應）。
+- `agy.exe`：優先自 `%LOCALAPPDATA%\agy\bin\agy.exe` 或系統 `PATH` 動態解析。
+- `claude.exe`：優先搜尋系統 `PATH`，次選 `%USERPROFILE%\.local\bin\claude.exe`；若是 npm 安裝的 `claude.cmd` 則自動切換為 `cmd.exe` 橋接啟動。
 
 ---
 
-## 快速使用 (CLI 腳本)
+## 核心設計與安全機制
 
-所有腳本均放置於倉庫根目錄（自動轉發）與 `skills/agent-delegation-tools/scripts/`：
+```
++-----------------------------------------------------------------------------+
+|                             主 AI Coding Agent                              |
+|                    (Antigravity / Codex / Claude Code)                      |
++-----------------------------------------------------------------------------+
+                                       │
+                      調派任務 (Prompt + TaskType)
+                                       ▼
++-----------------------------------------------------------------------------+
+|                         統一調度器 (delegate.ps1)                           |
++-----------------------------------------------------------------------------+
+            │                                 │                               │
+ 任務: analysis / scaffolding        任務: implementation               任務: review
+            │                                 │                               │
+            ▼                                 ▼                               ▼
+  ┌───────────────────┐             ┌───────────────────┐           ┌───────────────────┐
+  │  agy.ps1 (AGY)    │             │  codex.ps1 (Codex)│           │ claude.ps1 (Claude)│
+  ├───────────────────┤             ├───────────────────┤           ├───────────────────┤
+  │ * 極速 Flash 模型  │             │ * 中文路徑Junction│           │ * Isolated 脈絡   │
+  │ * Plan 規劃模式   │             │ * workspace-write │           │   節省 90% Tokens │
+  │ * UTF-8 輸出管道  │             │ * stdin 防掛死    │           │ * Resume 多輪工作 │
+  │ * Stdin $null 導向│             │ * UTF-8 OutFile   │           │ * 900s 逾時/防遞迴│
+  └───────────────────┘             └───────────────────┘           └───────────────────┘
+```
 
-### 1. 統一調度器 (`delegate.ps1`)
+1. **中文 / 非 ASCII 路徑 Junction 自動修復**：
+   - Codex Windows 沙箱在非 ASCII 路徑下會失常。`codex.ps1` 自動於 `%USERPROFILE%\codex-ws\<slug>` 建立純 ASCII Junction 映射，使 Git 與相對路徑運作完全正常。
+2. **Claude 脈絡隔離（節省高達 90%+ Tokens）**：
+   - `claude.ps1` 預設 `-Context isolated`（開啟 `--safe-mode`），不載入全域插件、MCP 與肥大提示詞。
+   - **實測數據**：無隔離呼叫約消耗 **48.7k tokens**；開啟隔離後降至 **7.0k tokens**；搭配 `-Tools` 收窄工具集更僅需 **3.6k tokens**！
+3. **安全 Stdin 管線與防掛死機制**：
+   - `agy.ps1` 與 `codex.ps1` 將輸入重定向至 `$null`，杜絕外部 CLI 停等 stdin。
+   - `claude.ps1` 將 Prompt 寫入 UTF-8 臨時檔案經由 stdin 饋入，確保引號、換行與多國語言字元絕不被 Windows 命令列解析破壞。
+4. **工作階段延續與多輪對話 (Resumable Sessions)**：
+   - `claude.ps1` 每次執行均會輸出 Session ID，後續任務可透過 `-Resume <session-id>` 接續同一個 worker，無需重複傳遞冗長的專案背景。
+5. **逾時、額度偵測與防遞迴保護**：
+   - `claude.ps1` 內建硬性計時器（預設 900 秒，逾時自動終止並回傳退出碼 `124`）。
+   - 遇到 API 額度耗盡時回傳退出碼 `10`，提示呼叫端切換後端而非盲目重試。
+   - 透過環境變數 `CLAUDE_DELEGATION_DEPTH` 嚴格防止子代理遞迴巢狀調用。
+
+---
+
+## 快速使用 (CLI 指令範例)
+
+所有腳本位於專案根目錄與 `skills/agent-delegation-tools/scripts/` 目錄下：
+
+### 1. 統一智慧調度器 (`delegate.ps1`)
 
 ```powershell
-# 自動依任務類型選擇最佳子代理（analysis 預設導向 AGY Flash；implementation 預設導向 Codex）
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\delegate.ps1 -TaskType analysis "分析 src/架構.ts 的依賴關係"
+# 自動依任務類型選擇最佳子代理（analysis 自動導向 AGY Flash；implementation 導向 Codex）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\delegate.ps1 -TaskType analysis "分析 src/core/auth.ts 的模組依賴關係"
 
-# 指定子代理後端
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\delegate.ps1 -Agent codex -Sandbox workspace-write "實作 lexer.js 的錯誤恢復機制"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\delegate.ps1 -Agent agy -Mode plan "規劃資料庫遷移方案"
+# 指定子代理後端與沙箱模式
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\delegate.ps1 -Agent codex -Sandbox workspace-write "實作 src/lexer.js 的錯誤恢復機制"
+
+# 指定審查任務（自動導向 Claude Code，並保存結果至檔案）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\delegate.ps1 -TaskType review -OutFile "$env:TEMP\review.txt" "審查 PR 安全性與潛在漏洞"
 ```
 
 ### 2. Antigravity CLI 子代理 (`agy.ps1`)
 
 ```powershell
-# 快速執行分析任務
+# 快速執行分析任務（預設 gemini-3.6-flash-low，速度極快、成本極低）
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\agy.ps1 "分析當前專案模組架構"
 
-# 使用 Plan 模式與指定模型
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\agy.ps1 -Mode plan -Model gemini-3.6-flash-low -OutFile "$env:TEMP\agy-plan.txt" "制定重構計畫"
+# 使用 Plan 規劃模式（唯讀，不變更任何檔案）並輸出至檔案
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\agy.ps1 -Mode plan -OutFile "$env:TEMP\agy-plan.txt" "制定資料庫遷移與重構計畫"
 
-# 高推理強度
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\agy.ps1 -Model gemini-3.1-pro-low -Effort high "審查複雜演算法正確性"
+# 切換高階推理模型與指定推理強度
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\agy.ps1 -Model gemini-3.1-pro-low -Effort high "審查高複雜度演算法之正確性"
 ```
 
-### 3. Codex CLI 子代理 (`codex.ps1`)
+### 3. OpenAI Codex CLI 子代理 (`codex.ps1`)
 
 ```powershell
-# 執行實作任務（預設 workspace-write 沙箱）
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\codex.ps1 "把 app/world.mjs 的 X 重構成 Y"
+# 執行實作任務（預設 workspace-write 沙箱，自動修復中文路徑）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\codex.ps1 "把 app/world.mjs 重構為 TypeScript 模組"
 
 # 純分析模式（read-only，不修改檔案）
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\codex.ps1 -Sandbox read-only "說明 app/scene3d.mjs 怎麼組場景"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\codex.ps1 -Sandbox read-only "說明 app/scene3d.mjs 的渲染流程"
 
-# 指定工作目錄（支援中文路徑自動轉換）與輸出結果
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\codex.ps1 -WorkDir "C:\離線儲存\程式設計\Aperture World" -OutFile result.txt "..."
+# 指定工作目錄與自訂輸出檔案
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\codex.ps1 -WorkDir "D:\Projects\MyApp" -OutFile "$env:TEMP\result.txt" "實作新功能"
 ```
 
-### 4. Claude Code 子代理 (`claude.ps1`)
-
-預設值就是 worker 的形狀：`plan` 權限模式（只讀不寫）、隔離脈絡、json 結果信封、900 秒逾時。
+### 4. Anthropic Claude Code 子代理 (`claude.ps1`)
 
 ```powershell
-# 執行審查與分析（只讀）
+# 執行深度安全審查（預設 plan 唯讀模式 + isolated 隔離脈絡）
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\claude.ps1 -OutFile "$env:TEMP\review.txt" "審查 src/api.ts 的邊界條件"
 
-# 允許寫入，並且只放行它驗證自己所需的那一條指令
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\claude.ps1 -Mode acceptEdits -AllowedTools 'Bash(npm test)' "修好 src/lexer.js 的失敗測試，跑 npm test 並回報輸出"
+# 允許編輯並放行特定驗證指令（例如 npm test）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\claude.ps1 -Mode acceptEdits -AllowedTools 'Bash(npm test)' "修復失敗的單元測試，執行 npm test 並回報結果"
 
-# 續談同一個 worker（每次執行都會印出 session id）
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\claude.ps1 -Resume 7b720d06-f238-413b-b98e-04f3c78bd0ad "把你剛剛提的第 2 點實作出來"
+# 多輪對話接續（使用前一次執行回傳的 Session ID）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\claude.ps1 -Resume 7b720d06-f238-413b-b98e-04f3c78bd0ad "針對剛才提出的第 2 點建議進行實作"
 ```
-
-主要參數：
-
-| 參數 | 作用 |
-|---|---|
-| `-Mode` | `plan`（預設）/ `acceptEdits` / `bypassPermissions` / `dontAsk` / `auto` / `manual`。同時接受 `read-only`、`workspace-write`、`danger-full-access`，讓 `delegate.ps1` 的 `-Sandbox` 可以原樣轉發。 |
-| `-Context` | `isolated`（預設）會加上 `--safe-mode`：不載入 plugin、skill、hook、MCP 與 `CLAUDE.md`。本倉庫實測：不加約 48.7k prompt tokens，加了約 7.0k，再用 `-Tools` 收窄約 3.6k。只有 worker 真的需要專案設定時才改用 `project`。 |
-| `-Tools` / `-AllowedTools` / `-DisallowedTools` | 收窄內建工具集 / 放行特定呼叫（`'Bash(npm test)'`）/ 封鎖特定呼叫。 |
-| `-OutFile` / `-RawFile` | 最終回覆（UTF-8 無 BOM）／原始 json 信封（含 `session_id`、`total_cost_usd`、`permission_denials`）。 |
-| `-Resume` / `-SessionId` / `-ForkSession` | 多輪委派。每次執行都會印出 session id，後續任務接續同一個 worker，不必重送整份交接。 |
-| `-Model` / `-FallbackModel` / `-Effort` / `-MaxBudgetUsd` | 模型檔位、過載時的備援模型清單、推理強度、花費上限。 |
-| `-AddDir` / `-AppendSystemPrompt` / `-WorkDir` | 額外可讀目錄、追加系統提示、worker 的工作目錄。 |
-| `-TimeoutSec`（預設 900）/ `-DryRun` | 硬性逾時（`claude` 本身沒有 `--print-timeout`）；`-DryRun` 只印出解析後的命令列，不實際呼叫。 |
-
-離開碼：`0` 成功、`124` 逾時（worker 已被終止）、`10` 撞到 Anthropic 額度上限。看到 `10` 就換後端或等重置，**不要**配置 API key 當備援。另外 wrapper 會擋下巢狀委派（`CLAUDE_DELEGATION_DEPTH`），除非明確傳入 `-AllowNested`。
 
 ---
 
-## 讓各 Agent 載入 Skill
+## 參數速查表
 
-三個後端各有自己的 adapter 來源，內容都在 `skills/agent-delegation-tools/` 之下單一來源維護：
+| 腳本 | 核心參數 | 說明 |
+|---|---|---|
+| `delegate.ps1` | `-Prompt <string>` | 任務提示詞（必填） |
+| | `-Agent <auto\|codex\|agy\|claude>` | 指定代理後端（預設 `auto`） |
+| | `-TaskType <analysis\|implementation\|scaffolding\|review>` | 任務類型（自動路由依據，預設 `implementation`） |
+| | `-Sandbox <read-only\|workspace-write\|danger-full-access>` | 沙箱權限模式（預設 `workspace-write`） |
+| | `-OutFile <path>` / `-WorkDir <path>` | 輸出檔案路徑（UTF-8） / 指定工作目錄 |
+| `agy.ps1` | `-Mode <accept-edits\|plan>` | 執行模式（預設 `accept-edits`，唯讀分析請用 `plan`） |
+| | `-Model <model-name>` | 指定模型（預設 `gemini-3.6-flash-low`） |
+| | `-Effort <low\|medium\|high>` | 推理強度設定 |
+| `codex.ps1` | `-Sandbox <read-only\|workspace-write\|danger-full-access>` | 沙箱權限（預設 `workspace-write`） |
+| | `-Effort <low\|medium\|high\|xhigh\|ultra\|max>` | 推理強度設定 |
+| | `-NoAliasPath` | 略過自動 Junction 建立（除錯用） |
+| `claude.ps1` | `-Mode <plan\|acceptEdits\|...>` | 權限模式（預設 `plan` 唯讀模式） |
+| | `-Context <isolated\|project>` | 脈絡模式（預設 `isolated`，省 90% tokens） |
+| | `-Tools` / `-AllowedTools` | 工具集限制 / 白名單指令放行（例如 `'Bash(npm test)'`） |
+| | `-Resume <session-id>` / `-ForkSession` | 接續現有工作階段 / 分支新工作階段 |
+| | `-TimeoutSec <int>` (預設 900) | 硬性逾時秒數（逾時自動終止進程並返回 code `124`） |
 
-| 後端 | 來源檔 | 專案層級安裝位置 | 全域安裝位置 |
+---
+
+## 讓各 AI Coding Agent 載入 Skill
+
+本倉庫將三種 AI Agent 的 Skill 定義集中於 `skills/agent-delegation-tools/` 單一來源進行版本控管：
+
+| AI Agent | 來源適配器檔案 | 專案層級安裝位置 | 全域（User）安裝位置 |
 |---|---|---|---|
-| Claude Code | `claude-code/SKILL.md` | `.claude/skills/agent-delegation-tools/` | `~/.claude/skills/agent-delegation-tools/` |
-| Antigravity | `antigravity/SKILL.md` | `.agents/skills/agent-delegation-tools/` | `~/.agents/skills/agent-delegation-tools/` |
-| Codex | `SKILL.md`（canonical） | —（Codex 只讀全域） | `~/.codex/skills/agent-delegation-tools/` |
+| **Claude Code** | `skills/.../claude-code/SKILL.md` | `.claude/skills/agent-delegation-tools/` | `~/.claude/skills/agent-delegation-tools/` |
+| **Antigravity** | `skills/.../antigravity/SKILL.md` | `.agents/skills/agent-delegation-tools/` | `~/.agents/skills/agent-delegation-tools/` |
+| **Codex CLI** | `skills/.../SKILL.md` (Canonical) | *(Codex 僅讀取全域)* | `~/.codex/skills/agent-delegation-tools/` |
 
-三份 adapter 都採「絕對路徑優先」解析：先找 `C:\離線儲存\程式設計\子代理` 的 wrapper，找不到才退回該安裝自帶的 `scripts\`。所以全域安裝在任何專案裡都能用，而 wrapper 只有倉庫這一份是真正的來源。
+### 一鍵同步安裝到所有 Agent
 
-一鍵同步全部安裝位置：
+執行以下 PowerShell 指令，即可一次將 Skill 同步安裝至本機所有 Agent 的全域與專案路徑：
 
 ```powershell
 $repo = 'C:\離線儲存\程式設計\子代理'
@@ -124,36 +192,71 @@ $targets = @{
 foreach ($t in $targets.GetEnumerator()) {
     New-Item -ItemType Directory -Force -Path (Join-Path $t.Key 'scripts') | Out-Null
     Copy-Item -LiteralPath $t.Value -Destination (Join-Path $t.Key 'SKILL.md') -Force
-    # 注意：萬用字元要用 -Path，-LiteralPath 不會展開 *
+    # 注意：萬用字元複製需使用 -Path 參數
     Copy-Item -Path (Join-Path $src 'scripts\*.ps1') -Destination (Join-Path $t.Key 'scripts') -Force
 }
-Copy-Item -LiteralPath "$src\claude-code\SKILL.md"  -Destination "$repo\.claude\skills\agent-delegation-tools\SKILL.md" -Force
-Copy-Item -LiteralPath "$src\antigravity\SKILL.md"  -Destination "$repo\.agents\skills\agent-delegation-tools\SKILL.md" -Force
+Copy-Item -LiteralPath "$src\claude-code\SKILL.md" -Destination "$repo\.claude\skills\agent-delegation-tools\SKILL.md" -Force
+Copy-Item -LiteralPath "$src\antigravity\SKILL.md" -Destination "$repo\.agents\skills\agent-delegation-tools\SKILL.md" -Force
 ```
 
-（Codex 另外需要 `agents\openai.yaml`；上面的 `~/.codex` 與 `~/.agents` 安裝已包含該檔。）
+### 在對話中調用
 
-呼叫方式：
-
-- **Claude Code**：`Skill("agent-delegation-tools", "<任務描述>")`。要不要委派、選哪個後端由使用者層級的 `agent-delegation` skill 負責，這支只管怎麼呼叫。
-- **Antigravity**：「使用 agent-delegation-tools skill，將這個分析任務委派給獨立子代理 worker」
-- **Codex**：`$agent-delegation-tools 把這個實作任務交給獨立子代理 worker`
+- **Claude Code**：
+  ```
+  Skill("agent-delegation-tools", "將這個模組重構任務委派給獨立子代理 worker 執行")
+  ```
+- **Antigravity**：
+  ```
+  請使用 agent-delegation-tools skill，將這個架構分析任務委派給獨立子代理 worker。
+  ```
+- **Codex CLI**：
+  ```
+  $agent-delegation-tools 把這個實作任務交給獨立子代理 worker 處理
+  ```
 
 ---
 
-## 核心設計與 Windows 踩坑防護
+## 專案結構
 
-1. **中文 / 非 ASCII 路徑 Junction 修復**：
-   Codex Windows 沙箱在非 ASCII 路徑下會默默掉回 `C:\` 導致相對路徑與 Git 失效。`codex.ps1` 自動建立 `%USERPROFILE%\codex-ws\<slug>` 之 ASCII Junction 映射並維護。
-2. **Standard Input (stdin) 懸掛修復**：
-   在 PowerShell / Agent 自動化程序中，外部 CLI 可能因等待 stdin 阻塞。`codex.ps1` 與 `agy.ps1` 導向 `$null` 輸入；`claude.ps1` 則改成把 prompt 寫成 UTF-8 暫存檔後由 stdin 餵入——stdin 一樣會關閉不會卡住，而且引號、換行與中文完全不經過 Windows 命令列解析。
-3. **UTF-8 編碼與 OutFile 支援**：
-   所有腳本統一使用 UTF-8 編碼寫入 `-OutFile`，避免中文輸出在 Windows 預設 CP950 下變成亂碼。
-4. **選型與額度紀律**：
-   - 長文本分析、大量 Scaffolding 優先使用 **AGY Flash**（每 token 最便宜、上下文最大）。
-   - 多檔案複雜實作優先使用 **Codex**。
-   - 一次僅運行單一外部子代理，避免無節制的並行 fan-out 或遞迴調用。
-5. **Claude worker 的脈絡隔離**：
-   `claude.ps1` 預設 `-Context isolated`（`--safe-mode`）。子代理不需要繼承母代理的 plugin、skill、hook、MCP 與 `CLAUDE.md`——那些每次呼叫都要重付 prompt 成本（本倉庫實測 48.7k → 7.0k tokens），而且母代理的常駐指示會一起繼承下去，可能讓 worker 做出不是你要它做的事。
-6. **逾時、額度與遞迴防護**：
-   `claude.ps1` 自帶硬性逾時（預設 900 秒，逾時殺掉並回傳 124）、額度上限偵測（回傳 10，提示換後端而非改用付費 API），以及 `CLAUDE_DELEGATION_DEPTH` 遞迴守衛。
+```
+.
+├── delegate.ps1                      # 統一調度器入口（轉發至 scripts/delegate.ps1）
+├── agy.ps1                           # Antigravity CLI 入口（轉發至 scripts/agy.ps1）
+├── codex.ps1                         # Codex CLI 入口（轉發至 scripts/codex.ps1）
+├── claude.ps1                        # Claude Code 入口（轉發至 scripts/claude.ps1）
+├── AGENTS.md                         # 跨 Agent 協同作業規範
+├── AI_HANDOFF.md                     # 即時專案狀態與交接記憶庫
+├── README.md                         # 本專案說明文件
+├── .agents/skills/                   # Antigravity 專案級 Skill 目錄
+├── .claude/skills/                   # Claude Code 專案級 Skill 目錄
+└── skills/
+    └── agent-delegation-tools/       # Skill 單一真相來源
+        ├── SKILL.md                  # Canonical 規格定義（Codex）
+        ├── agents/openai.yaml        # OpenAI / Codex Skill 元資料
+        ├── antigravity/SKILL.md      # Antigravity 專用適配器
+        ├── claude-code/SKILL.md      # Claude Code 專用適配器
+        └── scripts/                  # 封裝腳本本體
+            ├── agy.ps1
+            ├── claude.ps1
+            ├── codex.ps1
+            └── delegate.ps1
+```
+
+---
+
+## 退出碼與異常處理規範
+
+腳本執行後會回傳明確的 Exit Code，供自動化流程判定：
+
+| 退出碼 | 狀態含義 | 建議處理方式 |
+|:---:|---|---|
+| `0` | **成功完成** | 正常讀取輸出結果或 `-OutFile` 內容。 |
+| `10` | **API 額度耗盡 (Quota Exceeded)** | 切換至其他可用後端（如從 Claude 切換至 AGY/Codex）或等待額度重置。**切勿**配置私人付費 API Key 盲目重試。 |
+| `124` | **執行逾時 (Timeout)** | Worker 已被強制終止（預設 900 秒）。請將任務拆解為更小粒度後再次委派。 |
+| `1` / 其他 | **執行失敗 / 錯誤** | 檢查 stderr 輸出訊息或 `-RawFile` 的詳細錯誤紀錄。 |
+
+---
+
+## 授權條款
+
+本專案採用 [MIT License](LICENSE) 授權釋出。

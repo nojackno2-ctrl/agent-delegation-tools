@@ -168,3 +168,20 @@ Make the delegation skill usable from Codex, Claude Code, and Antigravity while 
   - The canonical `SKILL.md` wrapper-resolution fallback again honours `$env:CODEX_HOME` instead of assuming `~/.codex`.
 - Fixed while restoring that: the fallback previously used `$PSScriptRoot`, which is **empty** when these snippets run as inline commands rather than from a script file - it would have silently resolved to `scripts` relative to the cwd. Both branches of the resolver are now absolute.
 - Verified: `CODEX_HOME` set and unset both resolve to an existing `delegate.ps1`; 15 PowerShell fences across README and every SKILL.md parse with 0 AST errors; the reinstalled `~/.codex` SKILL.md hash matches source and `quick_validate.py` still reports `Skill is valid!`.
+
+## Public Traditional Chinese README Overhaul (this session)
+
+- **Objective**: Overhaul `README.md` into a polished, professional, comprehensive Traditional Chinese (繁體中文) landing page tailored for external developers and public open-source presentation.
+- **Key Enhancements in `README.md`**:
+  - Added project badges (Platform, PowerShell, Supported Agents, MIT License).
+  - Clear value proposition highlighting solutions to Windows pitfalls (non-ASCII sandbox junction bugs, stdin hang prevention, CP950 mojibake UTF-8 fixes, and 90%+ Claude prompt token savings via `--safe-mode` isolation).
+  - Multi-agent dispatch matrix & architecture workflow diagram.
+  - Comprehensive CLI usage examples for `delegate.ps1`, `agy.ps1`, `codex.ps1`, and `claude.ps1`.
+  - Detailed parameter matrix covering all wrappers.
+  - One-click multi-agent skill installer/synchronization PowerShell script.
+  - Natural language trigger phrases for Claude Code, Antigravity, and Codex.
+  - Directory structure and Exit Code specifications (`0`, `10`, `124`).
+- **Verification Performed**:
+  - PowerShell AST Parser validated all 5 PowerShell code blocks in `README.md` with 0 syntax errors.
+  - `git diff --check` passed cleanly.
+
