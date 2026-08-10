@@ -150,6 +150,15 @@ Make the delegation skill usable from Codex, Claude Code, and Antigravity while 
 - A copy bug worth remembering: `Copy-Item -LiteralPath '...\*.ps1'` silently copies nothing because `-LiteralPath` does not expand wildcards. The README's old AGY sync snippet had exactly this bug; the new unified install snippet uses `-Path` and comments the trap.
 - `README.md` "讓各 Agent 載入 Skill" was replaced with an adapter-source table plus one snippet that syncs all five install locations.
 
+## Branch consolidation and GitHub synchronization (this session)
+
+- **Objective**: Consolidate all branches, push to GitHub, and clean up obsolete / superseded branches per user instruction.
+- **Actions taken**:
+  - Cleaned up local branch `feat/multi-backend-subagents` (superseded by commit `7562725` rebased onto `master`).
+  - Closed draft PR #1 (`Refresh GitHub landing page`) and deleted obsolete remote branch `origin/codex/update-github-readme` (which contained early Codex-only README/docs superseded by the full multi-backend integration in `master`).
+  - Pruned remote-tracking refs with `git fetch --prune`.
+  - `master` is now the single consolidated branch locally and on `origin`, containing all verified multi-backend delegation tools and synchronized documentation.
+
 ## History reconciliation and salvage (this session)
 
 - `origin/master` held `24c8488` ("Delegate codex.ps1 through the installable agent delegation skill", the Codex-only stage), which local `master` had never contained - the multi-backend work had branched from `8cea524` instead, so the two lines had diverged.
@@ -159,6 +168,3 @@ Make the delegation skill usable from Codex, Claude Code, and Antigravity while 
   - The canonical `SKILL.md` wrapper-resolution fallback again honours `$env:CODEX_HOME` instead of assuming `~/.codex`.
 - Fixed while restoring that: the fallback previously used `$PSScriptRoot`, which is **empty** when these snippets run as inline commands rather than from a script file - it would have silently resolved to `scripts` relative to the cwd. Both branches of the resolver are now absolute.
 - Verified: `CODEX_HOME` set and unset both resolve to an existing `delegate.ps1`; 15 PowerShell fences across README and every SKILL.md parse with 0 AST errors; the reinstalled `~/.codex` SKILL.md hash matches source and `quick_validate.py` still reports `Skill is valid!`.
-
-
-
