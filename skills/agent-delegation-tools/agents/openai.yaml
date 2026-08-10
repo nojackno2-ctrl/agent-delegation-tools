@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Delegation Tools"
+  short_description: "Delegate bounded work to an isolated Codex CLI worker."
+  default_prompt: "Use $agent-delegation-tools to delegate this bounded task to an isolated Codex CLI worker."
