@@ -6,7 +6,7 @@ Make the delegation skill usable from Codex, Claude Code, and Antigravity while 
 
 ## Current state
 
-- Branch: `master`, tracking private GitHub repository `nojackno2-ctrl/agent-delegation-tools`.
+- Branch: `master`, tracking the project's GitHub repository.
 - Existing tool: `codex.ps1`, a Windows wrapper around non-interactive Codex CLI execution with non-ASCII workspace junction handling.
 - The repository did not previously contain a Codex skill package.
 - The first `init_skill.py` attempt failed before creating files because `python` is not available on PATH; use an available Python launcher/runtime instead.
@@ -17,10 +17,10 @@ Make the delegation skill usable from Codex, Claude Code, and Antigravity while 
 - The validator dependency was supplied in an isolated temporary directory; `quick_validate.py` then reported `Skill is valid!`, and the temporary directory was removed.
 - Direct `& .\codex.ps1` execution is blocked by the machine's PowerShell execution policy. Invoke through `powershell.exe -NoProfile -ExecutionPolicy Bypass -File` so no global policy is changed.
 - Final validation passed: `quick_validate.py` reported `Skill is valid!`, both repository PowerShell entry points had zero parser errors, and `git diff --check` passed.
-- Installed to `C:\Users\nojac\.codex\skills\agent-delegation-tools`; all three installed files matched source SHA-256 hashes, and the installed script parsed with zero errors.
+- Installed to `~\.codex\skills\agent-delegation-tools`; all three installed files matched source SHA-256 hashes, and the installed script parsed with zero errors.
 - Claude Code 2.1.220 is currently authenticated through claude.ai; AGY 1.1.11 and the shared Antigravity bridge are currently callable.
 - Attempting to invoke Claude Code with repository access was rejected before execution because the private repository contents could be transmitted to Anthropic. No Claude changes were made. Explicit user approval of private-code transmission to Anthropic and Google Antigravity is required before invoking either external agent.
-- The user clarified that the canonical project checkout is `C:\離線儲存\程式設計\子代理`. The validated Codex-skill work was reconciled into that checkout from the Documents clone; all seven synchronized files matched source SHA-256 hashes.
+- The user identified which local checkout is canonical. The validated Codex-skill work was reconciled into that checkout from a secondary clone; all seven synchronized files matched source SHA-256 hashes.
 - The user subsequently gave informed approval to continue with both external agents after the private-code transmission risk was explained.
 
 ## Constraints
@@ -73,7 +73,7 @@ Make the delegation skill usable from Codex, Claude Code, and Antigravity while 
 
 ## Antigravity global skill installation (this session)
 
-- Installed `agent-delegation-tools` to the user's global Antigravity skills directory at `C:\Users\nojac\.agents\skills\agent-delegation-tools`.
+- Installed `agent-delegation-tools` to the user's global Antigravity skills directory at `~\.agents\skills\agent-delegation-tools`.
 - Installed files:
   - `SKILL.md`: Complete self-contained Antigravity instructions with dynamic wrapper resolution (`.agents` -> `.codex`), task-preparation discipline, and Antigravity guardrails.
   - `scripts\codex.ps1`: Self-contained PowerShell execution wrapper (SHA-256 matched source `B7D68180...`).
@@ -132,9 +132,9 @@ Make the delegation skill usable from Codex, Claude Code, and Antigravity while 
 
 ## Claude Code user-level install (this session)
 
-- The adapter is now installed at **user level**: `C:\Users\nojac\.claude\skills\agent-delegation-tools\SKILL.md`, so it is discoverable from every project, not only from this checkout. The project-level copy at `.claude/skills/` is kept in sync.
+- The adapter is now installed at **user level**: `~\.claude\skills\agent-delegation-tools\SKILL.md`, so it is discoverable from every project, not only from this checkout. The project-level copy at `.claude/skills/` is kept in sync.
 - Single source of truth remains `skills/agent-delegation-tools/claude-code/SKILL.md`; both installs are byte-identical copies (SHA-256 `3FB692C914073F165787788FDB2D4625B655330644CF22F84B049BBB12D3D15F` across all three).
-- **Path resolution changed for the global case**: `git rev-parse --show-toplevel` was wrong outside this checkout - in another repository it resolves to *that* repository's root, which has no `delegate.ps1`. The adapter now tries the absolute path `C:\離線儲存\程式設計\子代理` first and only falls back to `git rev-parse` if the checkout has moved. Verified live from `C:\Users\nojac` (not a git repository): the snippet resolved correctly and `claude.ps1 -DryRun` produced the expected command line with cwd `C:\Users\nojac`.
+- **Path resolution changed for the global case**: `git rev-parse --show-toplevel` was wrong outside this checkout - in another repository it resolves to *that* repository's root, which has no `delegate.ps1`. The adapter now tries the canonical checkout's absolute path first and only falls back to `git rev-parse` if the checkout has moved. Verified live from the user's home directory (not a git repository): the snippet resolved correctly and `claude.ps1 -DryRun` produced the expected command line with that directory as cwd.
 - **Description rewritten to avoid trigger collision** with the user-level `agent-delegation` skill, which is now a sibling in the same global namespace. `agent-delegation` owns the decision (delegate or not, which backend, quota rules); `agent-delegation-tools` owns the mechanics (flags, modes, resume, exit codes) and its description explicitly defers selection to `agent-delegation`.
 - Added a "Target directory" note: all wrappers default `-WorkDir` to the caller's cwd, which is the desired behaviour when invoked from another project, but must be passed explicitly when the worker has to act elsewhere.
 - Skill discovery in *already-running* sessions is not affected; a new session is needed elsewhere to see it.
@@ -199,8 +199,8 @@ Make the delegation skill usable from Codex, Claude Code, and Antigravity while 
   - `[System.Management.Automation.Language.Parser]::ParseFile` reported 0 errors for `install.ps1` and all four root wrappers.
   - `install.ps1 -DryRun` (host auto-detection), `-Target copilot -DryRun`, and `-All -Prune -DryRun` all behaved as documented; exit code `0`.
   - Real `install.ps1` run completed with every copied file matching its source hash, so the three installed copies are back in sync with the repository.
-  - Grep over all tracked files (excluding this handoff log) found no remaining `C:\Users\nojac`, `離線儲存`, or `file:///` references.
-- **README.md updated for public release**: `file:///c:/離線儲存/...` links replaced with relative links; the hardcoded `$repo = 'C:\離線儲存\程式設計\子代理'` installer snippet replaced by `install.ps1` usage; VS Code Copilot Chat added to the host table with its `settings.json` auto-approve snippet; project structure updated; exit code `75` documented. The parameter table was corrected — it still advertised the pre-sync defaults (`delegate.ps1 -TaskType implementation` / `-Sandbox workspace-write`, `agy.ps1 -Mode accept-edits`), which the synchronized scripts had already changed to `analysis` / `read-only` / `plan`.
+  - Grep over all tracked files found no remaining absolute user-profile paths, maintainer checkout paths, or `file:///` references.
+- **README.md updated for public release**: absolute `file:///` links replaced with relative links; the installer snippet that hardcoded the maintainer's checkout path replaced by `install.ps1` usage; VS Code Copilot Chat added to the host table with its `settings.json` auto-approve snippet; project structure updated; exit code `75` documented. The parameter table was corrected — it still advertised the pre-sync defaults (`delegate.ps1 -TaskType implementation` / `-Sandbox workspace-write`, `agy.ps1 -Mode accept-edits`), which the synchronized scripts had already changed to `analysis` / `read-only` / `plan`.
 - **Added `LICENSE`**: MIT, copyright 2026 Jackie Chen, resolving the dangling `LICENSE` link that `README.md` already advertised.
-- **Outstanding for publication**: `AI_HANDOFF.md` itself still contains this machine's absolute paths, the maintainer's Windows username, and the private repository name — decide whether it ships as-is before making the repository public.
+- **`AI_HANDOFF.md` de-personalized for publication**: absolute `%USERPROFILE%` paths rewritten as `~\...`, the maintainer's canonical checkout path replaced with a description, the GitHub owner/repository name removed, and the secondary clone's location generalized. A real Claude session id used as a `-Resume` example in `README.md` was replaced with a `<session-id>` placeholder. The historical entries are otherwise unchanged.
 - Committed on branch `vscode-copilot-host` at the user's request; not pushed.
