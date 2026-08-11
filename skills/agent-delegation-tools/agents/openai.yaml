@@ -1,4 +1,4 @@
 interface:
   display_name: "Agent Delegation Tools"
-  short_description: "Delegate bounded work to an isolated Codex CLI worker."
-  default_prompt: "Use $agent-delegation-tools to delegate this bounded task to an isolated Codex CLI worker."
+  short_description: "Route work to configurable CLI child agents."
+  default_prompt: "Use $agent-delegation-tools to choose a CLI child model and reasoning effort for this bounded task, with parent-approved quota fallback when useful."

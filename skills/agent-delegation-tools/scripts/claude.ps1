@@ -1,59 +1,23 @@
-# Runs Claude Code CLI non-interactively as an isolated subagent worker.
-#
-# Usage:
-#   .\claude.ps1 "Review src/api.ts for edge cases"                        # plan mode, isolated context
-#   .\claude.ps1 -Mode acceptEdits -AllowedTools 'Bash(npm test)' "..."    # let the worker write + test
-#   .\claude.ps1 -OutFile result.txt -RawFile raw.json "..."               # final message + raw envelope
-#   .\claude.ps1 -Resume <session-id> "now apply the fix you proposed"     # multi-turn delegation
-#
-# What this wrapper adds on top of a bare `claude -p`:
-#
-#   1. Isolated worker context (-Context isolated, the default). A delegated worker that
-#      inherits the parent's plugins, skills, hooks, MCP servers and CLAUDE.md pays for all
-#      of it on every call, and can also inherit standing instructions meant for the parent.
-#      Measured on this repo: ~48.7k prompt tokens without --safe-mode, ~7.0k with it, and
-#      ~3.6k with `-Tools` narrowed. Use -Context project only when the worker genuinely
-#      needs the project's own configuration.
-#   2. A structured result contract. Defaults to --output-format json, so the wrapper always
-#      knows the final message, the session id, the cost, and whether the run actually failed
-#      (`is_error`) instead of guessing from a transcript.
-#   3. Resumable workers. A session id is assigned up front and printed, so a follow-up task
-#      can -Resume the same worker instead of re-sending the whole briefing.
-#   4. A hard timeout. `claude` has no --print-timeout of its own (agy does), so a stuck worker
-#      would otherwise block the parent forever. Times out at -TimeoutSec and exits 124.
-#   5. Quota discipline. Usage-limit failures exit 10 (same convention as AGY) so the caller
-#      switches backend or waits for reset instead of retrying in place.
-#   6. Prompt safety. The prompt is fed through stdin, never through the command line, so
-#      quotes, newlines and non-ASCII text survive Windows argument parsing intact.
-#   7. A recursion guard. A delegated worker refuses to delegate again unless -AllowNested.
+# Runs Claude CLI non-interactively as one isolated worker.
 
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
+    [ValidateNotNullOrEmpty()]
     [string]$Prompt,
 
-    # Permission mode. The read-only / workspace-write / danger-full-access spellings are
-    # accepted so delegate.ps1 can forward its -Sandbox value unchanged.
+    # Analysis is read-only by default. Writing must be selected explicitly.
     [ValidateSet('plan', 'acceptEdits', 'bypassPermissions', 'dontAsk', 'auto', 'manual',
                  'read-only', 'workspace-write', 'danger-full-access')]
     [string]$Mode = 'plan',
 
-    # 'isolated' runs with --safe-mode: no plugins, skills, hooks, MCP servers or CLAUDE.md.
-    # 'project' loads the project's configuration like a normal session.
     [ValidateSet('isolated', 'project')]
     [string]$Context = 'isolated',
 
     [string]$Model,
 
-    # Comma-separated list is accepted by the CLI; tried in order when the primary is busy.
-    [string]$FallbackModel,
-
     [ValidateSet('low', 'medium', 'high', 'xhigh', 'max')]
     [string]$Effort,
-
-    # Restrict the built-in tool set (e.g. 'Read','Grep','Glob' for a pure reader).
-    # Pass '' to disable all tools.
-    [string[]]$Tools,
 
     [string[]]$AllowedTools,
 
@@ -65,32 +29,22 @@ param(
 
     [string]$WorkDir,
 
-    # Final assistant message only, UTF-8 without BOM.
+    # Final assistant message, encoded as UTF-8 without a BOM.
     [string]$OutFile,
 
-    # Raw stdout of the CLI (the json envelope, or the stream-json lines).
+    # Complete CLI stdout, encoded as UTF-8 without a BOM.
     [string]$RawFile,
 
     [ValidateSet('json', 'text', 'stream-json')]
     [string]$OutputFormat = 'json',
 
-    # Resume an earlier worker by session id. Mutually exclusive with -SessionId.
-    [string]$Resume,
-
-    # Pin the new worker's session id instead of letting the wrapper generate one.
-    [string]$SessionId,
-
-    # When resuming, branch into a new session instead of extending the original.
-    [switch]$ForkSession,
-
-    [double]$MaxBudgetUsd,
-
+    # Claude has no native print timeout, so the wrapper enforces one.
+    [ValidateRange(1, 86400)]
     [int]$TimeoutSec = 900,
 
-    # Allow delegating from inside an already-delegated worker.
-    [switch]$AllowNested,
+    # Explicit executable override. CLAUDE_CLI_PATH is the environment equivalent.
+    [string]$ClaudePath,
 
-    # Print the resolved command line and exit without calling the CLI.
     [switch]$DryRun
 )
 
@@ -98,79 +52,70 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 $EXIT_TIMEOUT = 124
-$EXIT_QUOTA = 10
 
-# --- Recursion guard ------------------------------------------------------------------
+function Resolve-ExistingDirectory {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$ParameterName
+    )
 
-$depth = 0
-if ($env:CLAUDE_DELEGATION_DEPTH) { [void][int]::TryParse($env:CLAUDE_DELEGATION_DEPTH, [ref]$depth) }
-if ($depth -ge 1 -and -not $AllowNested) {
-    throw "Refusing to nest subagents: CLAUDE_DELEGATION_DEPTH=$depth. Pass -AllowNested if this is deliberate."
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if ($item.PSProvider.Name -ne 'FileSystem' -or -not $item.PSIsContainer) {
+        throw "$ParameterName must identify an existing file-system directory: $Path"
+    }
+    return $item.FullName
 }
 
-# --- Locate the CLI -------------------------------------------------------------------
+function Resolve-OutputPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
 
-$claudeExe = $null
-foreach ($candidate in @('claude.exe', 'claude.cmd', 'claude.bat', 'claude')) {
-    $cmd = Get-Command $candidate -CommandType Application -ErrorAction SilentlyContinue |
-        Select-Object -First 1
-    if ($cmd) { $claudeExe = $cmd.Source; break }
-}
-if (-not $claudeExe) {
-    $fallback = Join-Path $env:USERPROFILE '.local\bin\claude.exe'
-    if (Test-Path -LiteralPath $fallback) { $claudeExe = $fallback }
-}
-if (-not $claudeExe) {
-    throw "Claude Code CLI (claude) was not found on PATH or in `$env:USERPROFILE\.local\bin."
-}
+    if ([IO.Path]::IsPathRooted($Path)) {
+        $fullPath = [IO.Path]::GetFullPath($Path)
+    }
+    else {
+        $fullPath = [IO.Path]::GetFullPath((Join-Path (Get-Location).ProviderPath $Path))
+    }
 
-# --- Resolve working directory --------------------------------------------------------
-
-if (-not $WorkDir) { $WorkDir = (Get-Location).Path }
-$WorkDir = (Resolve-Path -LiteralPath $WorkDir).Path
-
-# --- Build arguments ------------------------------------------------------------------
-
-# Permission-mode aliases so one vocabulary works across all three backends.
-$permissionMode = switch ($Mode) {
-    'read-only'          { 'plan' }
-    'workspace-write'    { 'acceptEdits' }
-    'danger-full-access' { 'bypassPermissions' }
-    default              { $Mode }
+    $parent = Split-Path -Parent $fullPath
+    if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
+        throw "The output directory does not exist: $parent"
+    }
+    return $fullPath
 }
 
-if ($Resume -and $SessionId) {
-    throw 'Use -Resume or -SessionId, not both.'
-}
-if ($ForkSession -and -not $Resume) {
-    throw '-ForkSession only applies together with -Resume.'
+function Resolve-ClaudeExecutable {
+    param([string]$RequestedPath)
+
+    $explicitPath = $RequestedPath
+    if (-not $explicitPath) { $explicitPath = $env:CLAUDE_CLI_PATH }
+    if ($explicitPath) {
+        $item = Get-Item -LiteralPath $explicitPath -Force -ErrorAction Stop
+        if ($item.PSProvider.Name -ne 'FileSystem' -or $item.PSIsContainer) {
+            throw "ClaudePath must identify an executable file: $explicitPath"
+        }
+        return $item.FullName
+    }
+
+    foreach ($candidate in @('claude.exe', 'claude.cmd', 'claude.bat', 'claude')) {
+        $command = Get-Command $candidate -CommandType Application, ExternalScript -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($command) { return $command.Source }
+    }
+
+    if ($env:USERPROFILE) {
+        $fallback = Join-Path $env:USERPROFILE '.local\bin\claude.exe'
+        if (Test-Path -LiteralPath $fallback -PathType Leaf) {
+            return (Get-Item -LiteralPath $fallback -Force).FullName
+        }
+    }
+
+    throw 'Claude CLI was not found. Use -ClaudePath or CLAUDE_CLI_PATH.'
 }
 
-$effectiveSessionId = $null
-if (-not $Resume) {
-    $effectiveSessionId = if ($SessionId) { $SessionId } else { [guid]::NewGuid().ToString() }
-}
+# Quote one argument according to the Windows CommandLineToArgvW convention.
+function Format-WindowsArgument {
+    param([AllowEmptyString()][string]$Value)
 
-$claudeArgs = @('-p', '--output-format', $OutputFormat, '--permission-mode', $permissionMode)
-if ($Context -eq 'isolated')  { $claudeArgs += '--safe-mode' }
-if ($Model)                   { $claudeArgs += @('--model', $Model) }
-if ($FallbackModel)           { $claudeArgs += @('--fallback-model', $FallbackModel) }
-if ($Effort)                  { $claudeArgs += @('--effort', $Effort) }
-if ($AppendSystemPrompt)      { $claudeArgs += @('--append-system-prompt', $AppendSystemPrompt) }
-if ($PSBoundParameters.ContainsKey('Tools')) { $claudeArgs += @('--tools') + $Tools }
-if ($AllowedTools)            { $claudeArgs += @('--allowedTools') + $AllowedTools }
-if ($DisallowedTools)         { $claudeArgs += @('--disallowedTools') + $DisallowedTools }
-if ($AddDir)                  { $claudeArgs += @('--add-dir') + $AddDir }
-if ($PSBoundParameters.ContainsKey('MaxBudgetUsd')) {
-    # Invariant culture so a comma decimal separator never reaches the CLI.
-    $claudeArgs += @('--max-budget-usd', $MaxBudgetUsd.ToString([Globalization.CultureInfo]::InvariantCulture))
-}
-if ($Resume)                  { $claudeArgs += @('--resume', $Resume) }
-if ($effectiveSessionId)      { $claudeArgs += @('--session-id', $effectiveSessionId) }
-if ($ForkSession)             { $claudeArgs += '--fork-session' }
-
-# Everything on the command line is wrapper-controlled; the prompt goes in over stdin.
-function Format-CliArgument([string]$Value) {
     if ($Value -eq '') { return '""' }
     if ($Value -notmatch '[\s"]') { return $Value }
     $escaped = $Value -replace '(\\*)"', '$1$1\"'
@@ -178,111 +123,134 @@ function Format-CliArgument([string]$Value) {
     return '"' + $escaped + '"'
 }
 
-$argString = ($claudeArgs | ForEach-Object { Format-CliArgument $_ }) -join ' '
+if ([string]::IsNullOrWhiteSpace($Prompt)) {
+    throw 'Prompt must contain one bounded task description.'
+}
 
-# CreateProcess cannot launch a .cmd/.bat shim directly - route those through cmd.exe.
-$fileName = $claudeExe
-if ($claudeExe -match '\.(cmd|bat)$') {
+$depth = 0
+if ($env:AGENT_DELEGATION_DEPTH) {
+    [void][int]::TryParse($env:AGENT_DELEGATION_DEPTH, [ref]$depth)
+}
+if ($depth -ge 1) {
+    throw "Refusing recursive delegation: AGENT_DELEGATION_DEPTH=$depth."
+}
+
+$permissionMode = switch ($Mode) {
+    'read-only'          { 'plan' }
+    'workspace-write'    { 'acceptEdits' }
+    'danger-full-access' { 'bypassPermissions' }
+    default              { $Mode }
+}
+
+if (-not $WorkDir) { $WorkDir = (Get-Location).ProviderPath }
+$resolvedWorkDir = Resolve-ExistingDirectory -Path $WorkDir -ParameterName 'WorkDir'
+$resolvedAddDirs = @($AddDir | ForEach-Object {
+    if (-not [string]::IsNullOrWhiteSpace($_)) {
+        Resolve-ExistingDirectory -Path $_ -ParameterName 'AddDir'
+    }
+})
+$resolvedOutFile = if ($OutFile) { Resolve-OutputPath $OutFile } else { $null }
+$resolvedRawFile = if ($RawFile) { Resolve-OutputPath $RawFile } else { $null }
+$resolvedClaude = Resolve-ClaudeExecutable $ClaudePath
+
+$claudeArgs = @('-p', '--output-format', $OutputFormat, '--permission-mode', $permissionMode)
+if ($Context -eq 'isolated') { $claudeArgs += '--safe-mode' }
+if ($Model)                  { $claudeArgs += @('--model', $Model) }
+if ($Effort)                 { $claudeArgs += @('--effort', $Effort) }
+if ($AppendSystemPrompt)     { $claudeArgs += @('--append-system-prompt', $AppendSystemPrompt) }
+if ($AllowedTools)           { $claudeArgs += @('--allowedTools') + $AllowedTools }
+if ($DisallowedTools)        { $claudeArgs += @('--disallowedTools') + $DisallowedTools }
+if ($resolvedAddDirs)        { $claudeArgs += @('--add-dir') + $resolvedAddDirs }
+
+$fileName = $resolvedClaude
+$launchArgs = $claudeArgs
+$extension = [IO.Path]::GetExtension($resolvedClaude).ToLowerInvariant()
+if ($extension -eq '.ps1') {
+    $fileName = Join-Path $PSHOME 'powershell.exe'
+    $launchArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $resolvedClaude) + $claudeArgs
+}
+
+$argumentString = ($launchArgs | ForEach-Object { Format-WindowsArgument ([string]$_) }) -join ' '
+if ($extension -eq '.cmd' -or $extension -eq '.bat') {
+    if (-not $env:ComSpec) { throw 'ComSpec is not set; cannot launch a cmd/bat Claude shim.' }
     $fileName = $env:ComSpec
-    $argString = '/d /s /c "' + (Format-CliArgument $claudeExe) + ' ' + $argString + '"'
+    $innerCommand = (Format-WindowsArgument $resolvedClaude) + ' ' + (($claudeArgs | ForEach-Object { Format-WindowsArgument ([string]$_) }) -join ' ')
+    $argumentString = '/d /s /c "' + $innerCommand + '"'
 }
 
 if ($DryRun) {
-    Write-Host "[claude.ps1] cwd    : $WorkDir"
-    Write-Host "[claude.ps1] command: $fileName $argString"
-    Write-Host "[claude.ps1] prompt : $($Prompt.Length) chars via stdin"
+    Write-Host "[claude.ps1] cwd: $resolvedWorkDir"
+    Write-Host "[claude.ps1] command: $fileName $argumentString"
+    Write-Host "[claude.ps1] prompt: $($Prompt.Length) characters via UTF-8 stdin"
     exit 0
 }
 
-# --- Run ------------------------------------------------------------------------------
-
 $utf8NoBom = New-Object Text.UTF8Encoding($false)
-$stamp = [guid]::NewGuid().ToString('N').Substring(0, 8)
-$promptFile = Join-Path ([IO.Path]::GetTempPath()) "claude-ps1-prompt-$stamp.txt"
-$stdoutFile = Join-Path ([IO.Path]::GetTempPath()) "claude-ps1-stdout-$stamp.txt"
-$stderrFile = Join-Path ([IO.Path]::GetTempPath()) "claude-ps1-stderr-$stamp.txt"
-
-$previousDepth = $env:CLAUDE_DELEGATION_DEPTH
+$previousDepth = $env:AGENT_DELEGATION_DEPTH
 $exitCode = 1
+$timedOut = $false
 $stdout = ''
 $stderr = ''
-
 try {
-    [IO.File]::WriteAllText($promptFile, $Prompt, $utf8NoBom)
-    $env:CLAUDE_DELEGATION_DEPTH = ($depth + 1).ToString()
+    $env:AGENT_DELEGATION_DEPTH = ($depth + 1).ToString()
 
-    if ($effectiveSessionId) {
-        Write-Host "[claude.ps1] session $effectiveSessionId (resume with -Resume $effectiveSessionId)" -ForegroundColor DarkGray
+    $startInfo = New-Object Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $fileName
+    $startInfo.Arguments = $argumentString
+    $startInfo.WorkingDirectory = $resolvedWorkDir
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    try {
+        $startInfo.StandardInputEncoding = $utf8NoBom
+        $startInfo.StandardOutputEncoding = [Text.Encoding]::UTF8
+        $startInfo.StandardErrorEncoding = [Text.Encoding]::UTF8
+    } catch { }
+
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $startInfo
+    if (-not $process.Start()) { throw 'Failed to start the Claude worker process.' }
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
+    $process.StandardInput.Write($Prompt)
+    $process.StandardInput.Close()
+
+    if (-not $process.WaitForExit($TimeoutSec * 1000)) {
+        $timedOut = $true
+        try { $process.Kill() } catch { }
+        $null = $process.WaitForExit(10000)
+        $exitCode = $EXIT_TIMEOUT
     }
-    Write-Host "[claude.ps1] $permissionMode / $Context context, timeout ${TimeoutSec}s, cwd $WorkDir" -ForegroundColor DarkGray
-
-    $proc = Start-Process -FilePath $fileName -ArgumentList $argString `
-        -WorkingDirectory $WorkDir `
-        -RedirectStandardInput $promptFile `
-        -RedirectStandardOutput $stdoutFile `
-        -RedirectStandardError $stderrFile `
-        -NoNewWindow -PassThru
-
-    # Caching the handle keeps ExitCode readable after the timed WaitForExit overload.
-    $null = $proc.Handle
-
-    if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
-        try { $proc.Kill() } catch { }
-        $null = $proc.WaitForExit(10000)
-        Write-Host "[claude.ps1] timed out after ${TimeoutSec}s - worker killed." -ForegroundColor Red
-        exit $EXIT_TIMEOUT
+    else {
+        $process.WaitForExit()
+        $exitCode = $process.ExitCode
     }
-    $exitCode = $proc.ExitCode
-
-    if (Test-Path -LiteralPath $stdoutFile) { $stdout = [IO.File]::ReadAllText($stdoutFile, [Text.Encoding]::UTF8) }
-    if (Test-Path -LiteralPath $stderrFile) { $stderr = [IO.File]::ReadAllText($stderrFile, [Text.Encoding]::UTF8) }
-} finally {
-    $env:CLAUDE_DELEGATION_DEPTH = $previousDepth
-    foreach ($tmp in @($promptFile, $stdoutFile, $stderrFile)) {
-        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
-    }
+    $stdout = $stdoutTask.Result
+    $stderr = $stderrTask.Result
+}
+finally {
+    $env:AGENT_DELEGATION_DEPTH = $previousDepth
+    if ($process) { $process.Dispose() }
 }
 
-# --- Interpret the result -------------------------------------------------------------
-
 $finalMessage = $stdout
-$envelope = $null
-
 if ($OutputFormat -eq 'json' -and $stdout.Trim()) {
     try {
         $envelope = $stdout | ConvertFrom-Json
         if ($null -ne $envelope.result) { $finalMessage = [string]$envelope.result }
-    } catch {
-        Write-Host "[claude.ps1] could not parse the json envelope; passing stdout through." -ForegroundColor Yellow
+    }
+    catch {
+        Write-Warning 'Claude stdout was not a valid JSON envelope; preserving the raw output.'
     }
 }
 
-if ($RawFile) {
-    $rawPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($RawFile)
-    [IO.File]::WriteAllText($rawPath, $stdout, $utf8NoBom)
-}
-if ($OutFile) {
-    $outPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutFile)
-    [IO.File]::WriteAllText($outPath, $finalMessage, $utf8NoBom)
-}
+if ($resolvedRawFile) { [IO.File]::WriteAllText($resolvedRawFile, $stdout, $utf8NoBom) }
+if ($resolvedOutFile) { [IO.File]::WriteAllText($resolvedOutFile, $finalMessage, $utf8NoBom) }
 
 if ($finalMessage) { Write-Output $finalMessage }
-if ($stderr.Trim()) { Write-Host $stderr.TrimEnd() -ForegroundColor DarkYellow }
-
-if ($envelope) {
-    $cost = if ($null -ne $envelope.total_cost_usd) { '{0:N4}' -f $envelope.total_cost_usd } else { 'n/a' }
-    $secs = if ($null -ne $envelope.duration_ms) { [int]($envelope.duration_ms / 1000) } else { 0 }
-    Write-Host "[claude.ps1] turns=$($envelope.num_turns) cost=`$$cost ${secs}s session=$($envelope.session_id)" -ForegroundColor DarkGray
-    if ($envelope.permission_denials -and $envelope.permission_denials.Count -gt 0) {
-        Write-Host "[claude.ps1] $($envelope.permission_denials.Count) tool call(s) were denied - widen -Mode or -AllowedTools if the worker needed them." -ForegroundColor Yellow
-    }
-    if ($envelope.is_error -and $exitCode -eq 0) { $exitCode = 1 }
-}
-
-# Usage limits are not a retryable condition: switch backend or wait for the reset.
-if ("$finalMessage`n$stderr" -match '(?i)usage limit|rate.?limit|quota (exceeded|exhausted)|429') {
-    Write-Host "[claude.ps1] Anthropic usage limit hit. Switch backend (agy.ps1 / codex.ps1) or wait for the reset - do not configure an API key." -ForegroundColor Red
-    exit $EXIT_QUOTA
-}
+if ($stderr) { [Console]::Error.Write($stderr) }
+if ($timedOut) { Write-Warning "Claude worker timed out after $TimeoutSec seconds and was terminated." }
 
 exit $exitCode

@@ -1,75 +1,114 @@
 ---
 name: agent-delegation-tools
-description: Exact command lines for this machine's Windows delegation wrappers (delegate.ps1, codex.ps1, agy.ps1, claude.ps1) that run Codex CLI, an isolated Antigravity CLI agy process, or Claude Code as independent worker processes. Use when the user explicitly asks Antigravity/AGY to delegate, hand off, or run an independent external worker; when a task benefits from a specialized backend (Codex for heavy multi-file implementation, a separate AGY process for standalone tasks, Claude for review); or when non-ASCII Windows paths need sandbox junction handling. Do not trigger for ordinary coding work that Antigravity can perform directly, and do not confuse this with the internal invoke_subagent tool.
+description: Delegate one bounded task to an isolated Antigravity CLI, Codex CLI, or Claude CLI child on Windows, with parent-selected child model and reasoning effort plus optional sequential fallback when a CLI quota is exhausted. Use when the user asks for an external CLI worker, handoff, delegation, cross-CLI quota fallback, or safe non-ASCII Codex CLI paths. Do not use for ordinary work the current agent can complete directly.
 ---
 
-# Agent Delegation Tools (Antigravity)
+# Agent Delegation Tools
 
-Delegate clearly scoped tasks to isolated CLI worker processes (Codex, AGY, or Claude) on Windows.
-Keep the parent agent responsible for scoping, reviewing diffs, verifying output, and delivering the
-final answer.
+Delegate one clearly scoped task to one external CLI process at a time. The parent may explicitly order fallback CLIs, but the dispatcher tries them sequentially and only after a recognized quota/usage-limit failure. Keep the parent responsible for scope, model/effort choice, diff review, verification, and the final response.
 
-## Choose the Subagent Backend
+## Prepare
 
-| Backend | Script | Recommended Scenarios | Default Model / Pricing |
-|---|---|---|---|
-| **Antigravity CLI (AGY)** | `agy.ps1` | Large context reading, fast scaffolding, architecture analysis, planning | `gemini-3.6-flash-low` (Google / lowest token cost) |
-| **Codex CLI** | `codex.ps1` | Complex multi-file implementation, heavy refactoring, non-ASCII path worktrees | `gpt-5.6-sol` (OpenAI / ChatGPT quota) |
-| **Claude Code** | `claude.ps1` | Deep reasoning, codebase exploration, review; resumable multi-turn workers | `sonnet` / `opus` (Anthropic quota) |
-| **Unified Dispatcher** | `delegate.ps1` | Auto-routes: `analysis`/`scaffolding` → AGY, `review` → Claude, `implementation` → Codex | Automatically selects optimal worker |
+1. Read `AGENTS.md` and `AI_HANDOFF.md` in the target project when present.
+2. Inspect the current branch, status, and relevant diff before delegation.
+3. Define one bounded objective, allowed files, constraints, and one verification command.
+4. Forbid Git mutations unless the user explicitly authorized them.
+5. Use read-only analysis by default; enable writes only for authorized implementation.
+6. Choose the child model and reasoning effort from task complexity and provider support. These options change the child only, never the parent model or effort.
+7. Before adding a different provider to `-FallbackAgent`, ensure the task may be transmitted to that provider.
 
-Use `read-only` (Codex) or `plan` mode (AGY, Claude) for analysis and review. Ask for write access
-only when implementation is authorized. Run one external worker at a time.
+## Resolve the installed scripts
 
-## Invocation for Antigravity
-
-The wrappers live in the delegation checkout. Resolve it by absolute path first so this works from any
-project, and fall back to this skill's own bundled copies if the checkout is unavailable:
+The repository `install.ps1` synchronizes the same package into the Codex, Antigravity, Claude Code, and VS Code Copilot skill directories. Resolve any installed copy whose scripts are present:
 
 ```powershell
-$repoRoot = 'C:\離線儲存\程式設計\子代理'
-$wrapperRoot = if (Test-Path -LiteralPath (Join-Path $repoRoot 'delegate.ps1')) {
-    $repoRoot
-} else {
-    Join-Path $env:USERPROFILE '.agents\skills\agent-delegation-tools\scripts'
+$delegationCandidates = @()
+if ($env:CODEX_HOME) {
+    $delegationCandidates += Join-Path $env:CODEX_HOME 'skills\agent-delegation-tools'
 }
-
-# Option 1: Unified Dispatcher
-$delegateScript = Join-Path $wrapperRoot 'delegate.ps1'
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $delegateScript -Agent codex -Sandbox workspace-write -OutFile "$env:TEMP\worker-result.txt" 'Implement feature X in src/core.ts.'
-
-# Option 2: Direct Codex Worker (with non-ASCII path junction support)
-$codexScript = Join-Path $wrapperRoot 'codex.ps1'
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $codexScript -Sandbox workspace-write -OutFile "$env:TEMP\codex-result.txt" 'Implement the requested parser fix.'
-
-# Option 3: Direct Antigravity CLI Worker (a second, isolated AGY process)
-$agyScript = Join-Path $wrapperRoot 'agy.ps1'
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $agyScript -Mode plan -Model gemini-3.6-flash-low -OutFile "$env:TEMP\agy-result.txt" 'Analyze project dependencies and architecture.'
-
-# Option 4: Direct Claude Code Worker (isolated context, resumable)
-$claudeScript = Join-Path $wrapperRoot 'claude.ps1'
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $claudeScript -OutFile "$env:TEMP\claude-result.txt" -RawFile "$env:TEMP\claude-result.json" 'Review src/api.ts for edge cases and security issues.'
+if ($env:COPILOT_HOME) {
+    $delegationCandidates += Join-Path $env:COPILOT_HOME 'skills\agent-delegation-tools'
+}
+$delegationCandidates += @(
+    (Join-Path $env:USERPROFILE '.codex\skills\agent-delegation-tools'),
+    (Join-Path $env:USERPROFILE '.agents\skills\agent-delegation-tools'),
+    (Join-Path $env:USERPROFILE '.claude\skills\agent-delegation-tools'),
+    (Join-Path $env:USERPROFILE '.copilot\skills\agent-delegation-tools')
+)
+$delegationRoot = $delegationCandidates |
+    Where-Object { Test-Path -LiteralPath (Join-Path $_ 'scripts\delegate.ps1') -PathType Leaf } |
+    Select-Object -First 1
+if (-not $delegationRoot) { throw 'agent-delegation-tools is not installed.' }
+$delegationScripts = Join-Path $delegationRoot 'scripts'
 ```
 
-A `claude.ps1` worker defaults to `-Mode plan` (reads, never writes) and `-Context isolated`
-(`--safe-mode`: no plugins, skills, hooks, MCP servers, or `CLAUDE.md`). It prints a session id that a
-follow-up run can `-Resume`. Exit codes: `0` success, `124` timeout, `10` Anthropic usage limit - on
-`10`, switch backend or wait for the reset rather than configuring an API key. Full option table:
-`skills/agent-delegation-tools/SKILL.md` in the checkout, Option D.
+Run wrappers through a per-process execution-policy override; do not change the machine or user policy.
 
-**Target directory**: every wrapper defaults `-WorkDir` to the current working directory, not to the
-delegation checkout. When working in some other project that default is already correct - but pass
-`-WorkDir <absolute path>` explicitly whenever the worker must act somewhere other than the cwd.
+## Choose child settings and backend
 
-## Review the Result
+| Requested worker | Script | Safe analysis mode | Authorized write mode |
+|---|---|---|---|
+| Antigravity CLI / AGY | `agy.ps1` | `-Mode plan` | `-Mode workspace-write` |
+| Codex CLI | `codex.ps1` | `-Sandbox read-only` | `-Sandbox workspace-write` |
+| Claude CLI | `claude.ps1` | `-Mode plan` | `-Mode workspace-write` |
+| Task-based routing | `delegate.ps1` | default `analysis` + `read-only` | pass `-TaskType implementation -Sandbox workspace-write` |
 
-1. Read output files using UTF-8 encoding (`Get-Content $outFile -Encoding UTF8`).
-2. Directly inspect Git status and `git diff` yourself; do not accept the worker's summary as proof of success.
-3. Run proportionate test verification on any modified files.
-4. Update `AI_HANDOFF.md` with findings, progress, and verification results.
+When the user asks a host to use its matching CLI as a subagent, call the matching direct wrapper. Pass `-Model` and `-Effort` when the parent judges an override useful. Use the dispatcher when task-based routing or quota fallback is useful.
 
-## Antigravity Guardrails
+### Antigravity CLI worker
 
-- **Distinct from internal subagents**: This skill delegates work to external, isolated CLI processes (`codex.ps1`, `agy.ps1`, `claude.ps1`), whereas `invoke_subagent` spawns internal subagents within Antigravity.
-- **Prevent recursive delegation**: Never instruct an external worker process to invoke another layer of delegation. `claude.ps1` enforces this itself through `CLAUDE_DELEGATION_DEPTH`.
-- **Execution policy**: Always use `-NoProfile -ExecutionPolicy Bypass` when executing PowerShell scripts via `run_command` without altering system-wide or user-wide execution policies.
+```powershell
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'agy.ps1') `
+    -WorkDir 'C:\path\to\project' -Mode plan -Model '<agy-model>' -Effort high `
+    -OutFile "$env:TEMP\agy-worker.txt" `
+    'Inspect the dependency flow. Report file evidence. Do not edit files.'
+```
+
+Use `-AddDir` for additional workspaces. Use `-SkipPermissions` only with an explicit write mode. AGY enforces `-PrintTimeout` itself.
+
+### Codex CLI worker
+
+```powershell
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'codex.ps1') `
+    -WorkDir 'C:\path\to\project' -Sandbox read-only -Model '<codex-model>' -Effort xhigh `
+    -Ephemeral -OutFile "$env:TEMP\codex-worker.txt" `
+    'Inspect the parser failure. Report the cause with file evidence. Do not edit files.'
+```
+
+Use `-AddDir` for extra workspaces. The wrapper gives non-ASCII paths collision-safe ASCII junctions. Use `-ApproveForMe` only with `workspace-write`.
+
+### Claude CLI worker
+
+```powershell
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'claude.ps1') `
+    -WorkDir 'C:\path\to\project' -Mode plan -Context isolated `
+    -Model '<claude-model>' -Effort high -OutFile "$env:TEMP\claude-worker.txt" `
+    'Review the API for edge cases. Report file evidence. Do not edit files.'
+```
+
+The wrapper sends the prompt through UTF-8 stdin and enforces `-TimeoutSec`. Keep `-Context isolated` unless project skills, hooks, or configuration are required.
+
+### Unified dispatcher
+
+```powershell
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'delegate.ps1') `
+    -Agent codex -FallbackAgent claude,agy -WorkDir 'C:\path\to\project' `
+    -CodexModel '<codex-model>' -CodexEffort xhigh `
+    -ClaudeModel '<claude-model>' -ClaudeEffort high `
+    -AgyModel '<agy-model>' -AgyEffort high -OutFile "$env:TEMP\worker.txt" `
+    'Review the changed API surface. Do not edit files.'
+```
+
+Automatic primary routing remains `analysis`/`scaffolding` to AGY, `review` to Claude, and `implementation` to Codex. `-FallbackAgent` is an ordered, opt-in list chosen by the parent; without it, only the primary child runs. Provider-specific model/effort values apply to their named child. The backward-compatible `-Model`/`-Effort` pair applies only to the primary child when no provider-specific value overrides it.
+
+The dispatcher recognizes quota exhaustion from nonzero CLI failures such as quota/usage-limit exhaustion, rate limiting, resource exhaustion, insufficient credits, and HTTP 429. It also recognizes Claude JSON envelopes with `is_error=true` and the same evidence. It does not switch on ordinary errors. A fallback receives the original task, the current worktree, and bounded prior output marked as untrusted progress notes. If every candidate is exhausted, the dispatcher exits `75`.
+
+## Review
+
+1. Read output files as UTF-8.
+2. Inspect status and diff directly; never treat a worker summary as proof.
+3. Run proportionate verification yourself.
+4. Update `AI_HANDOFF.md` after material results or failed attempts.
+5. Report real exit codes, timeouts, denied permissions, and unverified behavior plainly.
+
+All wrappers reject recursive external delegation through `AGENT_DELEGATION_DEPTH`. Do not bypass that guard or fan out multiple external workers; quota fallback remains sequential.
