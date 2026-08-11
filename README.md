@@ -28,10 +28,10 @@
 
 | 後端 / 工具 | 核心腳本 | 核心專長與適用情境 | 預設模型 | 額度消耗來源 |
 |---|---|---|---|---|
-| **Google Antigravity CLI** | [`agy.ps1`](file:///c:/離線儲存/程式設計/子代理/agy.ps1) | 超長上下文閱讀、快速 Scaffolding、架構模組分析、Plan 模式規劃 | `gemini-3.6-flash-low` (可選 Pro / Claude / GPT) | Google Antigravity |
-| **OpenAI Codex CLI** | [`codex.ps1`](file:///c:/離線儲存/程式設計/子代理/codex.ps1) | 跨多檔案複雜實作、大型重構、重度編碼（內建 Windows 中文路徑 Junction 修復） | `gpt-5.6-sol` (可選 o-series) | OpenAI / ChatGPT |
-| **Anthropic Claude Code** | [`claude.ps1`](file:///c:/離線儲存/程式設計/子代理/claude.ps1) | 深度邏輯審查、安全邊界掃描、架構對齊；支援工作階段接續（Resume） | `sonnet` / `opus` | Anthropic Claude |
-| **統一智慧調度器** | [`delegate.ps1`](file:///c:/離線儲存/程式設計/子代理/delegate.ps1) | 依任務類型自動路由：`analysis`/`scaffolding` → AGY，`review` → Claude，`implementation` → Codex | 依任務自動選型 | 依選用後端 |
+| **Google Antigravity CLI** | [`agy.ps1`](./agy.ps1) | 超長上下文閱讀、快速 Scaffolding、架構模組分析、Plan 模式規劃 | `gemini-3.6-flash-low` (可選 Pro / Claude / GPT) | Google Antigravity |
+| **OpenAI Codex CLI** | [`codex.ps1`](./codex.ps1) | 跨多檔案複雜實作、大型重構、重度編碼（內建 Windows 中文路徑 Junction 修復） | `gpt-5.6-sol` (可選 o-series) | OpenAI / ChatGPT |
+| **Anthropic Claude Code** | [`claude.ps1`](./claude.ps1) | 深度邏輯審查、安全邊界掃描、架構對齊；支援工作階段接續（Resume） | `sonnet` / `opus` | Anthropic Claude |
+| **統一智慧調度器** | [`delegate.ps1`](./delegate.ps1) | 依任務類型自動路由：`analysis`/`scaffolding` → AGY，`review` → Claude，`implementation` → Codex | 依任務自動選型 | 依選用後端 |
 
 ### 本機 CLI 安裝路徑動態解析
 
@@ -149,15 +149,19 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\claude.ps1 -Resume 7b7
 | 腳本 | 核心參數 | 說明 |
 |---|---|---|
 | `delegate.ps1` | `-Prompt <string>` | 任務提示詞（必填） |
-| | `-Agent <auto\|codex\|agy\|claude>` | 指定代理後端（預設 `auto`） |
-| | `-TaskType <analysis\|implementation\|scaffolding\|review>` | 任務類型（自動路由依據，預設 `implementation`） |
-| | `-Sandbox <read-only\|workspace-write\|danger-full-access>` | 沙箱權限模式（預設 `workspace-write`） |
-| | `-OutFile <path>` / `-WorkDir <path>` | 輸出檔案路徑（UTF-8） / 指定工作目錄 |
-| `agy.ps1` | `-Mode <accept-edits\|plan>` | 執行模式（預設 `accept-edits`，唯讀分析請用 `plan`） |
-| | `-Model <model-name>` | 指定模型（預設 `gemini-3.6-flash-low`） |
-| | `-Effort <low\|medium\|high>` | 推理強度設定 |
+| | `-Agent <auto\|agy\|codex\|claude>` | 指定主要後端（預設 `auto`） |
+| | `-FallbackAgent <list>` | 額度耗盡時的接手順序，需明確指定；未指定則只跑主要後端 |
+| | `-TaskType <analysis\|implementation\|scaffolding\|review>` | 任務類型（自動路由依據，預設 `analysis`） |
+| | `-Sandbox <read-only\|workspace-write\|danger-full-access>` | 沙箱權限模式（**預設 `read-only`**，要寫檔須明確指定） |
+| | `-AgyModel` / `-CodexModel` / `-ClaudeModel` | 各後端專屬模型，覆寫共用的 `-Model` |
+| | `-AgyEffort` / `-CodexEffort` / `-ClaudeEffort` | 各後端專屬推理強度，覆寫共用的 `-Effort` |
+| | `-OutFile <path>` / `-WorkDir <path>` / `-AddDir <list>` | 輸出檔案路徑（UTF-8） / 工作目錄 / 追加工作目錄 |
+| `agy.ps1` | `-Mode <plan\|accept-edits\|read-only\|workspace-write>` | 執行模式（**預設 `plan`** 唯讀，要寫檔須明確指定） |
+| | `-Model <model-name>` | 指定模型（省略則由 AGY 自身預設決定） |
+| | `-Effort <low\|medium\|high>` / `-PrintTimeout <5m>` | 推理強度 / AGY 自身的輸出逾時 |
 | `codex.ps1` | `-Sandbox <read-only\|workspace-write\|danger-full-access>` | 沙箱權限（預設 `workspace-write`） |
 | | `-Effort <low\|medium\|high\|xhigh\|ultra\|max>` | 推理強度設定 |
+| | `-Ephemeral` / `-AddDir <list>` | 用完即棄的工作階段 / 追加可寫目錄 |
 | | `-NoAliasPath` | 略過自動 Junction 建立（除錯用） |
 | `claude.ps1` | `-Mode <plan\|acceptEdits\|...>` | 權限模式（預設 `plan` 唯讀模式） |
 | | `-Context <isolated\|project>` | 脈絡模式（預設 `isolated`，省 90% tokens） |
@@ -169,35 +173,50 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\claude.ps1 -Resume 7b7
 
 ## 讓各 AI Coding Agent 載入 Skill
 
-本倉庫將三種 AI Agent 的 Skill 定義集中於 `skills/agent-delegation-tools/` 單一來源進行版本控管：
+整包 Skill 以 `skills/agent-delegation-tools/` 為單一真相來源；四種 Host 讀的是同一份 `SKILL.md`，不再有各自的適配器分支。
 
-| AI Agent | 來源適配器檔案 | 專案層級安裝位置 | 全域（User）安裝位置 |
-|---|---|---|---|
-| **Claude Code** | `skills/.../claude-code/SKILL.md` | `.claude/skills/agent-delegation-tools/` | `~/.claude/skills/agent-delegation-tools/` |
-| **Antigravity** | `skills/.../antigravity/SKILL.md` | `.agents/skills/agent-delegation-tools/` | `~/.agents/skills/agent-delegation-tools/` |
-| **Codex CLI** | `skills/.../SKILL.md` (Canonical) | *(Codex 僅讀取全域)* | `~/.codex/skills/agent-delegation-tools/` |
+| AI Agent | 個人（全域）安裝位置 | 備註 |
+|---|---|---|
+| **Codex CLI** | `%CODEX_HOME%\skills\` 或 `~/.codex/skills/` | 僅讀取全域路徑 |
+| **Antigravity (AGY)** | `~/.agents/skills/` | 亦讀取專案內 `.agents/skills/` |
+| **Claude Code** | `~/.claude/skills/` | 亦讀取專案內 `.claude/skills/` |
+| **VS Code Copilot Chat** | `%COPILOT_HOME%\skills\` 或 `~/.copilot/skills/` | 需 VS Code 1.106+；另會掃描 `~/.agents/skills/`、`~/.claude/skills/` 與專案內 `.github/skills/`、`.agents/skills/`、`.claude/skills/` |
 
-### 一鍵同步安裝到所有 Agent
-
-執行以下 PowerShell 指令，即可一次將 Skill 同步安裝至本機所有 Agent 的全域與專案路徑：
+### 一鍵安裝
 
 ```powershell
-$repo = 'C:\離線儲存\程式設計\子代理'
-$src = Join-Path $repo 'skills\agent-delegation-tools'
-$targets = @{
-    "$env:USERPROFILE\.claude\skills\agent-delegation-tools" = "$src\claude-code\SKILL.md"
-    "$env:USERPROFILE\.agents\skills\agent-delegation-tools" = "$src\antigravity\SKILL.md"
-    "$env:USERPROFILE\.codex\skills\agent-delegation-tools"  = "$src\SKILL.md"
-}
-foreach ($t in $targets.GetEnumerator()) {
-    New-Item -ItemType Directory -Force -Path (Join-Path $t.Key 'scripts') | Out-Null
-    Copy-Item -LiteralPath $t.Value -Destination (Join-Path $t.Key 'SKILL.md') -Force
-    # 注意：萬用字元複製需使用 -Path 參數
-    Copy-Item -Path (Join-Path $src 'scripts\*.ps1') -Destination (Join-Path $t.Key 'scripts') -Force
-}
-Copy-Item -LiteralPath "$src\claude-code\SKILL.md" -Destination "$repo\.claude\skills\agent-delegation-tools\SKILL.md" -Force
-Copy-Item -LiteralPath "$src\antigravity\SKILL.md" -Destination "$repo\.agents\skills\agent-delegation-tools\SKILL.md" -Force
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
+
+`install.ps1` 以自身所在位置定位來源，複製後逐檔比對 SHA-256；不帶參數時只安裝到**本機已存在**的 Host 目錄，不會替沒裝的工具亂建資料夾。
+
+```powershell
+# 先看會改什麼，不寫入任何檔案
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -DryRun
+
+# 安裝到全部四個 Host（缺的目錄會建立）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -All
+
+# 只裝給 VS Code Copilot，並清掉舊版殘留檔案
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Target copilot -Prune
+```
+
+`-Target` 可接受 `codex` / `agents` / `claude` / `copilot`，可複選。
+
+### VS Code Copilot Chat 額外設定
+
+Copilot 每次執行封裝腳本都會要求核准終端機指令。若要免除，加到 VS Code 的 `settings.json`：
+
+```json
+"chat.tools.terminal.autoApprove": {
+  "/agent-delegation-tools[\\\\/]scripts[\\\\/](delegate|codex|agy|claude)\\.ps1/i": {
+    "approve": true,
+    "matchCommandLine": true
+  }
+}
+```
+
+這條規則只放行**已安裝 Skill 包裡**的四支腳本。外部 CLI 有自己的沙箱、不受 VS Code 權限機制管轄，請確認你接受這個取捨再加。
 
 ### 在對話中調用
 
@@ -213,6 +232,7 @@ Copy-Item -LiteralPath "$src\antigravity\SKILL.md" -Destination "$repo\.agents\s
   ```
   $agent-delegation-tools 把這個實作任務交給獨立子代理 worker 處理
   ```
+- **VS Code Copilot Chat**：在聊天框輸入 `/agent-delegation-tools`，或直接描述需求讓模型自行載入。
 
 ---
 
@@ -224,17 +244,16 @@ Copy-Item -LiteralPath "$src\antigravity\SKILL.md" -Destination "$repo\.agents\s
 ├── agy.ps1                           # Antigravity CLI 入口（轉發至 scripts/agy.ps1）
 ├── codex.ps1                         # Codex CLI 入口（轉發至 scripts/codex.ps1）
 ├── claude.ps1                        # Claude Code 入口（轉發至 scripts/claude.ps1）
+├── install.ps1                       # 一鍵安裝／同步至各 Host 的 Skill 目錄
 ├── AGENTS.md                         # 跨 Agent 協同作業規範
 ├── AI_HANDOFF.md                     # 即時專案狀態與交接記憶庫
 ├── README.md                         # 本專案說明文件
-├── .agents/skills/                   # Antigravity 專案級 Skill 目錄
-├── .claude/skills/                   # Claude Code 專案級 Skill 目錄
+├── .agents/skills/                   # Antigravity / Copilot 專案級 Skill 目錄
+├── .claude/skills/                   # Claude Code / Copilot 專案級 Skill 目錄
 └── skills/
-    └── agent-delegation-tools/       # Skill 單一真相來源
-        ├── SKILL.md                  # Canonical 規格定義（Codex）
+    └── agent-delegation-tools/       # Skill 單一真相來源（四種 Host 共用）
+        ├── SKILL.md                  # Canonical 規格定義
         ├── agents/openai.yaml        # OpenAI / Codex Skill 元資料
-        ├── antigravity/SKILL.md      # Antigravity 專用適配器
-        ├── claude-code/SKILL.md      # Claude Code 專用適配器
         └── scripts/                  # 封裝腳本本體
             ├── agy.ps1
             ├── claude.ps1
@@ -252,6 +271,7 @@ Copy-Item -LiteralPath "$src\antigravity\SKILL.md" -Destination "$repo\.agents\s
 |:---:|---|---|
 | `0` | **成功完成** | 正常讀取輸出結果或 `-OutFile` 內容。 |
 | `10` | **API 額度耗盡 (Quota Exceeded)** | 切換至其他可用後端（如從 Claude 切換至 AGY/Codex）或等待額度重置。**切勿**配置私人付費 API Key 盲目重試。 |
+| `75` | **所有後端額度皆已耗盡** | `delegate.ps1` 依 `-FallbackAgent` 逐一嘗試後仍無可用後端。等待額度重置，切勿改用付費 API Key。 |
 | `124` | **執行逾時 (Timeout)** | Worker 已被強制終止（預設 900 秒）。請將任務拆解為更小粒度後再次委派。 |
 | `1` / 其他 | **執行失敗 / 錯誤** | 檢查 stderr 輸出訊息或 `-RawFile` 的詳細錯誤紀錄。 |
 
