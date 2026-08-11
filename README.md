@@ -139,7 +139,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\claude.ps1 -OutFile "$
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\claude.ps1 -Mode acceptEdits -AllowedTools 'Bash(npm test)' "修復失敗的單元測試，執行 npm test 並回報結果"
 
 # 多輪對話接續（使用前一次執行回傳的 Session ID）
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\claude.ps1 -Resume 7b720d06-f238-413b-b98e-04f3c78bd0ad "針對剛才提出的第 2 點建議進行實作"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\claude.ps1 -Resume <session-id> "針對剛才提出的第 2 點建議進行實作"
 ```
 
 ---
