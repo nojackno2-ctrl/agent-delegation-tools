@@ -1,95 +1,216 @@
-# Runs Antigravity CLI (agy) non-interactively as an isolated subagent worker.
-#
-# Usage:
-#   .\agy.ps1 "Analyze architecture in src/core"
-#   .\agy.ps1 -Mode plan "Plan the database migration"
-#   .\agy.ps1 -Model gemini-3.1-pro-low -Effort high "Review complex crypto logic"
-#   .\agy.ps1 -OutFile result.txt "Scaffold unit tests for auth module"
+# Runs Antigravity CLI (agy) non-interactively as one isolated worker.
 
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
+    [ValidateNotNullOrEmpty()]
     [string]$Prompt,
 
-    [ValidateSet('accept-edits', 'plan')]
-    [string]$Mode = 'accept-edits',
+    # Analysis is read-only by default. Writing must be selected explicitly.
+    [ValidateSet('plan', 'accept-edits', 'read-only', 'workspace-write')]
+    [string]$Mode = 'plan',
 
-    # Default to cost-effective fast model; override with pro / claude / gpt-oss as needed.
-    [string]$Model = 'gemini-3.6-flash-low',
+    [string]$Model,
 
     [ValidateSet('low', 'medium', 'high')]
     [string]$Effort,
 
     [string]$WorkDir,
 
-    # Capture the agent's output into a file with UTF-8 encoding.
+    # Additional workspace directories accepted by AGY.
+    [string[]]$AddDir,
+
+    # Complete worker output, encoded as UTF-8 without a BOM.
     [string]$OutFile,
 
     [ValidateSet('text', 'json', 'stream-json')]
     [string]$OutputFormat = 'text',
 
-    # Auto-approve tool permissions for automated non-interactive tasks.
+    # AGY provides its own bounded print timeout.
+    [ValidatePattern('^[1-9][0-9]*(ms|s|m|h)$')]
+    [string]$PrintTimeout = '5m',
+
     [switch]$SkipPermissions,
 
-    # Enable terminal restrictions sandbox.
     [switch]$Sandbox,
 
-    [string]$PrintTimeout = '5m'
+    # Explicit executable override. AGY_CLI_PATH is the environment equivalent.
+    [string]$AgyPath
 )
 
 $ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [Text.Encoding]::UTF8
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
-# Locate agy.exe
-$agyBin = Join-Path $env:LOCALAPPDATA 'agy\bin\agy.exe'
-if (-not (Test-Path -LiteralPath $agyBin)) {
-    $cmd = Get-Command 'agy.exe' -ErrorAction SilentlyContinue
-    if ($cmd) {
-        $agyBin = $cmd.Source
-    } else {
-        throw "Antigravity CLI (agy.exe) is not found in $agyBin or on PATH."
+function Resolve-ExistingDirectory {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [string]$ParameterName = 'WorkDir'
+    )
+
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if ($item.PSProvider.Name -ne 'FileSystem' -or -not $item.PSIsContainer) {
+        throw "$ParameterName must identify an existing file-system directory: $Path"
     }
+    return $item.FullName
 }
 
-# Resolve target working directory
-$originalLocation = (Get-Location).Path
-if (-not $WorkDir) {
-    $targetDir = $originalLocation
-} else {
-    $targetDir = (Resolve-Path -LiteralPath $WorkDir).Path
+function Resolve-OutputPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if ([IO.Path]::IsPathRooted($Path)) {
+        $fullPath = [IO.Path]::GetFullPath($Path)
+    }
+    else {
+        $fullPath = [IO.Path]::GetFullPath((Join-Path (Get-Location).ProviderPath $Path))
+    }
+
+    $parent = Split-Path -Parent $fullPath
+    if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
+        throw "The output directory does not exist: $parent"
+    }
+    return $fullPath
 }
 
-# Build arguments for agy
-$agyArgs = @('-p', $Prompt, '--mode', $Mode, '--model', $Model, '--output-format', $OutputFormat, '--print-timeout', $PrintTimeout)
-if ($Effort) {
-    $agyArgs += @('--effort', $Effort)
-}
-if ($SkipPermissions) {
-    $agyArgs += '--dangerously-skip-permissions'
-}
-if ($Sandbox) {
-    $agyArgs += '--sandbox'
+function Resolve-AgyExecutable {
+    param([string]$RequestedPath)
+
+    $explicitPath = $RequestedPath
+    if (-not $explicitPath) { $explicitPath = $env:AGY_CLI_PATH }
+    if ($explicitPath) {
+        $item = Get-Item -LiteralPath $explicitPath -Force -ErrorAction Stop
+        if ($item.PSProvider.Name -ne 'FileSystem' -or $item.PSIsContainer) {
+            throw "AgyPath must identify an executable file: $explicitPath"
+        }
+        return $item.FullName
+    }
+
+    if ($env:LOCALAPPDATA) {
+        $installedPath = Join-Path $env:LOCALAPPDATA 'agy\bin\agy.exe'
+        if (Test-Path -LiteralPath $installedPath -PathType Leaf) {
+            return (Get-Item -LiteralPath $installedPath -Force).FullName
+        }
+    }
+
+    foreach ($candidate in @('agy.exe', 'agy.cmd', 'agy.bat', 'agy')) {
+        $command = Get-Command $candidate -CommandType Application, ExternalScript -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($command) { return $command.Source }
+    }
+
+    throw 'Antigravity CLI was not found. Use -AgyPath or AGY_CLI_PATH.'
 }
 
+function Format-WindowsArgument {
+    param([AllowEmptyString()][string]$Value)
+
+    if ($Value -eq '') { return '""' }
+    if ($Value -notmatch '[\s"]') { return $Value }
+    $escaped = $Value -replace '(\\*)"', '$1$1\"'
+    $escaped = $escaped -replace '(\\+)$', '$1$1'
+    return '"' + $escaped + '"'
+}
+
+if ([string]::IsNullOrWhiteSpace($Prompt)) {
+    throw 'Prompt must contain one bounded task description.'
+}
+
+$depth = 0
+if ($env:AGENT_DELEGATION_DEPTH) {
+    [void][int]::TryParse($env:AGENT_DELEGATION_DEPTH, [ref]$depth)
+}
+if ($depth -ge 1) {
+    throw "Refusing recursive delegation: AGENT_DELEGATION_DEPTH=$depth."
+}
+
+$effectiveMode = switch ($Mode) {
+    'read-only'       { 'plan' }
+    'workspace-write' { 'accept-edits' }
+    default           { $Mode }
+}
+if ($SkipPermissions -and $effectiveMode -ne 'accept-edits') {
+    throw 'SkipPermissions requires an explicit write mode (workspace-write or accept-edits).'
+}
+
+if (-not $WorkDir) { $WorkDir = (Get-Location).ProviderPath }
+$resolvedWorkDir = Resolve-ExistingDirectory $WorkDir
+$resolvedAddDirs = @($AddDir | ForEach-Object {
+    if (-not [string]::IsNullOrWhiteSpace($_)) {
+        Resolve-ExistingDirectory -Path $_ -ParameterName 'AddDir'
+    }
+})
+$resolvedOutFile = if ($OutFile) { Resolve-OutputPath $OutFile } else { $null }
+$resolvedAgy = Resolve-AgyExecutable $AgyPath
+
+$agyArgs = @('-p', $Prompt, '--mode', $effectiveMode, '--output-format', $OutputFormat, '--print-timeout', $PrintTimeout)
+foreach ($directory in $resolvedAddDirs) { $agyArgs += @('--add-dir', $directory) }
+if ($Model)           { $agyArgs += @('--model', $Model) }
+if ($Effort)          { $agyArgs += @('--effort', $Effort) }
+if ($SkipPermissions) { $agyArgs += '--dangerously-skip-permissions' }
+if ($Sandbox)         { $agyArgs += '--sandbox' }
+
+$fileName = $resolvedAgy
+$launchArgs = $agyArgs
+$extension = [IO.Path]::GetExtension($resolvedAgy).ToLowerInvariant()
+if ($extension -eq '.ps1') {
+    $fileName = Join-Path $PSHOME 'powershell.exe'
+    $launchArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $resolvedAgy) + $agyArgs
+}
+
+$argumentString = ($launchArgs | ForEach-Object { Format-WindowsArgument ([string]$_) }) -join ' '
+if ($extension -eq '.cmd' -or $extension -eq '.bat') {
+    if (-not $env:ComSpec) { throw 'ComSpec is not set; cannot launch a cmd/bat AGY shim.' }
+    $fileName = $env:ComSpec
+    $innerCommand = (Format-WindowsArgument $resolvedAgy) + ' ' + (($agyArgs | ForEach-Object { Format-WindowsArgument ([string]$_) }) -join ' ')
+    $argumentString = '/d /s /c "' + $innerCommand + '"'
+}
+
+$previousDepth = $env:AGENT_DELEGATION_DEPTH
+$exitCode = 1
+$stdout = ''
+$stderr = ''
 try {
-    if ($targetDir -ne $originalLocation) {
-        Set-Location -LiteralPath $targetDir
-    }
+    $env:AGENT_DELEGATION_DEPTH = ($depth + 1).ToString()
 
-    if ($OutFile) {
-        $outPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutFile)
-        $output = $null | & $agyBin @agyArgs 2>&1
-        $exitCode = $LASTEXITCODE
-        [IO.File]::WriteAllLines($outPath, $output, [Text.Encoding]::UTF8)
-        $output | ForEach-Object { Write-Host $_ }
-    } else {
-        $null | & $agyBin @agyArgs
-        $exitCode = $LASTEXITCODE
-    }
-} finally {
-    if ((Get-Location).Path -ne $originalLocation) {
-        Set-Location -LiteralPath $originalLocation
-    }
+    $startInfo = New-Object Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $fileName
+    $startInfo.Arguments = $argumentString
+    $startInfo.WorkingDirectory = $resolvedWorkDir
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    try {
+        $startInfo.StandardOutputEncoding = [Text.Encoding]::UTF8
+        $startInfo.StandardErrorEncoding = [Text.Encoding]::UTF8
+    } catch { }
+
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $startInfo
+    if (-not $process.Start()) { throw 'Failed to start the AGY worker process.' }
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
+    $process.WaitForExit()
+    $exitCode = $process.ExitCode
+    $stdout = $stdoutTask.Result
+    $stderr = $stderrTask.Result
 }
+finally {
+    $env:AGENT_DELEGATION_DEPTH = $previousDepth
+    if ($process) { $process.Dispose() }
+}
+
+$combinedOutput = $stdout
+if ($stderr) {
+    if ($combinedOutput -and -not $combinedOutput.EndsWith([Environment]::NewLine)) {
+        $combinedOutput += [Environment]::NewLine
+    }
+    $combinedOutput += $stderr
+}
+if ($resolvedOutFile) {
+    $utf8NoBom = New-Object Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText($resolvedOutFile, $combinedOutput, $utf8NoBom)
+}
+if ($stdout) { [Console]::Out.Write($stdout) }
+if ($stderr) { [Console]::Error.Write($stderr) }
 
 exit $exitCode
