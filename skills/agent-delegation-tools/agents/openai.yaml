@@ -1,4 +1,4 @@
 interface:
   display_name: "Agent Delegation Tools"
-  short_description: "Route work to configurable CLI child agents."
-  default_prompt: "Use $agent-delegation-tools to choose a CLI child model and reasoning effort for this bounded task, with parent-approved quota fallback when useful."
+  short_description: "Choose child models and run bounded CLI workers."
+  default_prompt: "Use $agent-delegation-tools to honor my child model and reasoning preferences, or select them automatically, then delegate the bounded task safely."

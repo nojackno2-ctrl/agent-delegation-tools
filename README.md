@@ -244,7 +244,10 @@ Copilot 每次執行封裝腳本都會要求核准終端機指令。若要免除
 ├── agy.ps1                           # Antigravity CLI 入口（轉發至 scripts/agy.ps1）
 ├── codex.ps1                         # Codex CLI 入口（轉發至 scripts/codex.ps1）
 ├── claude.ps1                        # Claude Code 入口（轉發至 scripts/claude.ps1）
+├── parallel.ps1                      # 多任務並行批次與同步摘要入口
+├── status.ps1                        # 三個 CLI 的可驗證用量狀態入口
 ├── install.ps1                       # 一鍵安裝／同步至各 Host 的 Skill 目錄
+├── validate.ps1                      # 無副作用的煙霧／一致性驗證腳本
 ├── AGENTS.md                         # 跨 Agent 協同作業規範
 ├── AI_HANDOFF.md                     # 即時專案狀態與交接記憶庫
 ├── README.md                         # 本專案說明文件
@@ -258,7 +261,9 @@ Copilot 每次執行封裝腳本都會要求核准終端機指令。若要免除
             ├── agy.ps1
             ├── claude.ps1
             ├── codex.ps1
-            └── delegate.ps1
+            ├── delegate.ps1
+            ├── parallel.ps1
+            └── status.ps1
 ```
 
 ---
@@ -274,6 +279,34 @@ Copilot 每次執行封裝腳本都會要求核准終端機指令。若要免除
 | `75` | **所有後端額度皆已耗盡** | `delegate.ps1` 依 `-FallbackAgent` 逐一嘗試後仍無可用後端。等待額度重置，切勿改用付費 API Key。 |
 | `124` | **執行逾時 (Timeout)** | Worker 已被強制終止（預設 900 秒）。請將任務拆解為更小粒度後再次委派。 |
 | `1` / 其他 | **執行失敗 / 錯誤** | 檢查 stderr 輸出訊息或 `-RawFile` 的詳細錯誤紀錄。 |
+
+---
+
+## 驗證腳本 (`validate.ps1`)
+
+一支無副作用的煙霧／一致性驗證腳本，用來在改動任一封裝腳本或 Skill 文件後快速確認基本正確性，**絕不呼叫真正的 `claude`/`codex`/`agy` 外部模型，也不寫入任何使用者設定或全域 Skill 安裝**：
+
+1. 以 PowerShell 語言剖析器（AST）解析所有 Git 追蹤的 `*.ps1`，確認 0 個語法錯誤。
+2. 以 SHA-256 比對根目錄四支封裝腳本（`agy.ps1`／`claude.ps1`／`codex.ps1`／`delegate.ps1`）是否與 `skills\agent-delegation-tools\scripts\` 下的 canonical 副本逐位元組相同。
+3. 以 SHA-256 比對 canonical `SKILL.md` 與專案內 `.agents/skills`、`.claude/skills` 副本；若本機已安裝 Codex／Antigravity／Claude Code 的全域 Skill 目錄，一併比對（未安裝則略過，不算失敗）。
+4. 在**各自獨立的子行程**中（避免封裝腳本內部的 `exit` 影響到驗證腳本本身）安全地觸發：
+   - 防遞迴機制（設定 `AGENT_DELEGATION_DEPTH=1`，應在解析任何外部執行檔前即被拒絕）。
+   - `-Mode`/`-Sandbox` 的 `ValidateSet` 對非法值的拒絕。
+   - 模式衝突防護（`codex.ps1 -ApproveForMe` 搭配 `-Sandbox read-only`、`agy.ps1 -SkipPermissions` 搭配預設 `plan`、`delegate.ps1 -Sandbox danger-full-access` 搭配 `-Agent agy`）。
+   - `claude.ps1 -DryRun` 的參數映射（以系統既有的 `cmd.exe` 路徑充當無害的 `-ClaudePath` 佔位，`-DryRun` 只印出命令列即結束，佔位執行檔絕不會被啟動）。
+
+```powershell
+# Windows PowerShell 5.1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\validate.ps1
+
+# 若已安裝 pwsh (PowerShell 7+)
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\validate.ps1
+
+# 只跑靜態的 AST／一致性檢查，略過會另外啟動子行程的即時防護測試
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\validate.ps1 -SkipLiveProbes
+```
+
+結束碼 `0` 代表所有未略過的檢查均通過；`1` 代表至少一項失敗。`-ReportPath <file>` 可額外輸出 UTF-8 JSON 結果報告。
 
 ---
 
