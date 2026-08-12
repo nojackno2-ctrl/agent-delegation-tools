@@ -1,5 +1,9 @@
 # AI handoff
 
+## 2026-08-12 GitHub synchronization
+
+- Pushed canonical synchronization commit `ae5161c` to GitHub `master`. Post-push `install.ps1 -DryRun` found Codex, Agents/AGY, and Claude installs already identical: 0 added, 0 updated, 8 unchanged per target, so no redundant write was performed.
+
 - 2026-08-12 full-workspace pre-optimization inventory: only this handoff has pending documentation changes; no code or build artifact changes were found. Create a documentation baseline commit before further optimization.
 
 ## Objective
