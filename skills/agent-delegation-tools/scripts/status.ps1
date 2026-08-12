@@ -61,6 +61,19 @@ function Resolve-CodexExecutable {
         return $item.FullName
     }
 
+    $sandboxCandidates = @()
+    if ($env:CODEX_HOME) {
+        $sandboxCandidates += Join-Path $env:CODEX_HOME '.sandbox-bin\codex.exe'
+    }
+    if ($env:USERPROFILE) {
+        $sandboxCandidates += Join-Path $env:USERPROFILE '.codex\.sandbox-bin\codex.exe'
+    }
+    foreach ($sandboxCandidate in $sandboxCandidates | Select-Object -Unique) {
+        if (Test-Path -LiteralPath $sandboxCandidate -PathType Leaf) {
+            return (Get-Item -LiteralPath $sandboxCandidate -Force -ErrorAction Stop).FullName
+        }
+    }
+
     if ($env:LOCALAPPDATA) {
         $binRoot = Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\bin'
         $desktopCodex = Get-ChildItem -LiteralPath $binRoot -Recurse -Filter 'codex.exe' -File -ErrorAction SilentlyContinue |
@@ -72,7 +85,16 @@ function Resolve-CodexExecutable {
     $pathCommand = Get-Command 'codex' -CommandType Application, ExternalScript -ErrorAction SilentlyContinue |
         Select-Object -First 1
     if ($pathCommand) { return $pathCommand.Source }
-    throw 'Codex was not found. Use -CodexPath or CODEX_CLI_PATH.'
+    throw 'Codex was not found in the sandbox, Desktop installation, or on PATH. Use -CodexPath or CODEX_CLI_PATH.'
+}
+
+function Test-CodexSandboxIdentity {
+    try {
+        return [Security.Principal.WindowsIdentity]::GetCurrent().Name -match '(?i)\\CodexSandbox(?:Offline)?$'
+    }
+    catch {
+        return $false
+    }
 }
 
 function Format-WindowsArgument {
@@ -235,11 +257,15 @@ function Get-CodexStatus {
         }
     }
     catch {
+        $message = $_.Exception.Message
+        if ((Test-CodexSandboxIdentity) -and $message -match '(?i)auth(?:entication|orization)?\s+required') {
+            $message += ' Host Codex credentials are isolated from the current Windows sandbox identity; rerun this status command through approved host execution. Do not copy auth.json or tokens into the workspace.'
+        }
         return [ordered]@{
             agent = 'codex'
             availability = 'unavailable'
             observedAt = $observedAt.ToString('o')
-            message = $_.Exception.Message
+            message = $message
             windows = @()
         }
     }

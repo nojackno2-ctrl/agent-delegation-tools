@@ -1,6 +1,6 @@
 ---
 name: agent-delegation-tools
-description: Inspect supported CLI usage limits and delegate bounded tasks to isolated Antigravity CLI, Codex CLI, or Claude CLI children on Windows, with parent-selected child model and reasoning effort, hard timeouts, concurrent batches, synchronization summaries, and optional sequential fallback when a CLI quota is exhausted. Use when the user asks for external CLI workers, parallel subagents, handoff, delegation, remaining Codex usage or reset time, cross-CLI quota fallback, or safe non-ASCII Codex CLI paths. Do not use for ordinary work the current agent can complete directly.
+description: Inspect supported CLI usage limits and delegate bounded tasks to isolated Antigravity CLI, Codex CLI, or Claude CLI children on Windows, with parent-selected child model and reasoning effort, hard timeouts, concurrent batches, synchronization summaries, and optional sequential fallback when a CLI quota is exhausted. Use when the user asks for external CLI workers, parallel subagents, handoff, delegation, remaining Codex usage or reset time, cross-CLI quota fallback, or safe Codex CLI execution from a Windows sandbox or non-ASCII path. Do not use for ordinary work the current agent can complete directly.
 ---
 
 # Agent Delegation Tools
@@ -87,6 +87,10 @@ Use `-AddDir` for additional workspaces. Use `-SkipPermissions` only with an exp
 ```
 
 Use `-AddDir` for extra workspaces. The wrapper gives non-ASCII paths collision-safe ASCII junctions. `-ApproveForMe` is optional and requires `workspace-write`; if the installed CLI rejects that version-sensitive combination, rerun without it and report the compatibility failure.
+
+Executable resolution is sandbox-aware: honor `-CodexPath` or `CODEX_CLI_PATH` first, then prefer `CODEX_HOME\.sandbox-bin\codex.exe` or `%USERPROFILE%\.codex\.sandbox-bin\codex.exe` before the separate Desktop installation and PATH. This avoids WindowsApps aliases whose package ACL can reject child-process launch inside a sandbox.
+
+Codex App sandboxes can run under a separate Windows identity such as `CodexSandboxOffline`. That identity may read the wrapper and executable but cannot use the host user's CLI authentication. If authentication preflight returns exit `78` in that environment, rerun the same wrapper through the command tool's approved host-execution mode (for example, `shell_command` with `require_escalated` in Codex). Never copy `auth.json`, access tokens, or refresh tokens into the workspace or a temporary directory to bypass identity isolation.
 
 ### Claude CLI worker
 

@@ -1,4 +1,4 @@
 interface:
   display_name: "Agent Delegation Tools"
-  short_description: "Choose child models and run bounded CLI workers."
-  default_prompt: "Use $agent-delegation-tools to honor my child model and reasoning preferences, or select them automatically, then delegate the bounded task safely."
+  short_description: "Run sandbox-safe bounded CLI workers."
+  default_prompt: "Use $agent-delegation-tools to run a bounded CLI worker safely from the Windows sandbox."

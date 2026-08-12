@@ -117,8 +117,22 @@ function Resolve-CodexExecutable {
         return $item.FullName
     }
 
-    # Prefer the Desktop-managed CLI. The WindowsApps PATH alias can be discoverable
-    # by Get-Command while its package ACL still rejects direct child-process launch.
+    # Codex-hosted sandboxes expose an executable copy outside WindowsApps. Prefer it
+    # because the PATH alias can be discoverable while its package ACL rejects launch.
+    $sandboxCandidates = @()
+    if ($env:CODEX_HOME) {
+        $sandboxCandidates += Join-Path $env:CODEX_HOME '.sandbox-bin\codex.exe'
+    }
+    if ($env:USERPROFILE) {
+        $sandboxCandidates += Join-Path $env:USERPROFILE '.codex\.sandbox-bin\codex.exe'
+    }
+    foreach ($sandboxCandidate in $sandboxCandidates | Select-Object -Unique) {
+        if (Test-Path -LiteralPath $sandboxCandidate -PathType Leaf) {
+            return (Get-Item -LiteralPath $sandboxCandidate -Force -ErrorAction Stop).FullName
+        }
+    }
+
+    # Fall back to the Desktop-managed CLI when it is installed separately.
     if ($env:LOCALAPPDATA) {
         $binRoot = Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\bin'
         $desktopCodex = Get-ChildItem -LiteralPath $binRoot -Recurse -Filter 'codex.exe' -File -ErrorAction SilentlyContinue |
@@ -135,7 +149,7 @@ function Resolve-CodexExecutable {
         return $pathCommand.Source
     }
 
-    throw 'Codex was not found in the Desktop installation or on PATH. Use -CodexPath or CODEX_CLI_PATH.'
+    throw 'Codex was not found in the sandbox, Desktop installation, or on PATH. Use -CodexPath or CODEX_CLI_PATH.'
 }
 
 # Quote one argument according to the Windows CommandLineToArgvW convention.
@@ -157,6 +171,20 @@ function Test-AuthenticationRequired {
 
     if ($ExitCode -eq 0 -or [string]::IsNullOrWhiteSpace($Output)) { return $false }
     return $Output -match '(?i)(not\s+logged\s+in|not\s+signed\s+in|login\s+required|log\s+in\s+required|authentication\s+required|unauthenticated|unauthorized|please\s+(?:log|sign)\s+in|missing\s+(?:credentials?|api\s+key)|invalid\s+(?:credentials?|api\s+key|authentication))'
+}
+
+function Get-CodexAuthenticationGuidance {
+    $isCodexSandboxIdentity = $false
+    try {
+        $identityName = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+        $isCodexSandboxIdentity = $identityName -match '(?i)\\CodexSandbox(?:Offline)?$'
+    }
+    catch { }
+
+    if ($isCodexSandboxIdentity) {
+        return "Codex CLI credentials are isolated from the current Windows sandbox identity. Re-run this wrapper through an approved host-execution command. Do not copy auth.json or tokens into the workspace. If the host CLI is also logged out, run 'codex login' interactively first."
+    }
+    return "Codex CLI is not logged in. Run 'codex login' interactively, complete sign-in, then retry the delegated task."
 }
 
 function Get-CodexLoginStatus {
@@ -323,7 +351,7 @@ $resolvedOutFile = if ($OutFile) { Resolve-OutputPath $OutFile } else { $null }
 $resolvedCodex = Resolve-CodexExecutable -RequestedPath $CodexPath
 $loginStatus = Get-CodexLoginStatus -Executable $resolvedCodex
 if (Test-AuthenticationRequired -ExitCode $loginStatus.ExitCode -Output $loginStatus.Output) {
-    $guidance = "Codex CLI is not logged in. Run 'codex login' interactively, complete sign-in, then retry the delegated task."
+    $guidance = Get-CodexAuthenticationGuidance
     if ($resolvedOutFile) {
         [IO.File]::WriteAllText($resolvedOutFile, $guidance, (New-Object Text.UTF8Encoding($false)))
     }
@@ -406,7 +434,7 @@ finally {
 if ($stdout) { [Console]::Out.Write($stdout) }
 if (-not $timedOut -and (Test-AuthenticationRequired -ExitCode $exitCode -Output ($stdout + [Environment]::NewLine + $stderr))) {
     $exitCode = 78
-    $guidance = "Codex CLI is not logged in. Run 'codex login' interactively, complete sign-in, then retry the delegated task."
+    $guidance = Get-CodexAuthenticationGuidance
     if ($resolvedOutFile) {
         [IO.File]::WriteAllText($resolvedOutFile, $guidance, (New-Object Text.UTF8Encoding($false)))
     }

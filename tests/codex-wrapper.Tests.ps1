@@ -12,9 +12,33 @@ function Assert-True {
     if (-not $Condition) { throw $Message }
 }
 
+function Invoke-ResolverFromScript {
+    param(
+        [Parameter(Mandatory = $true)][string]$ScriptPath,
+        [string]$RequestedPath
+    )
+
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile($ScriptPath, [ref]$tokens, [ref]$parseErrors)
+    if ($parseErrors.Count -ne 0) {
+        throw "Could not parse resolver source: $ScriptPath"
+    }
+    $definition = $ast.Find({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Resolve-CodexExecutable'
+    }, $true)
+    if (-not $definition) { throw "Resolve-CodexExecutable was not found: $ScriptPath" }
+
+    $runner = [scriptblock]::Create("& { $($definition.Extent.Text); Resolve-CodexExecutable `$args[0] }")
+    return & $runner $RequestedPath
+}
+
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $compatibilityWrapper = Join-Path $repositoryRoot 'codex.ps1'
 $wrapper = Join-Path $repositoryRoot 'skills\agent-delegation-tools\scripts\codex.ps1'
+$statusScript = Join-Path $repositoryRoot 'skills\agent-delegation-tools\scripts\status.ps1'
 $fakeCodex = Join-Path $PSScriptRoot 'fixtures\fake-codex.ps1'
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("agent-delegation-tools-{0}" -f [Guid]::NewGuid().ToString('N'))
 $testRoot = [IO.Path]::GetFullPath($testRoot)
@@ -26,6 +50,35 @@ if (-not $testRoot.StartsWith($safeTempRoot, [StringComparison]::OrdinalIgnoreCa
 
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 try {
+    $resolverProfile = Join-Path $testRoot 'profile'
+    $resolverCodexHome = Join-Path $testRoot 'codex-home'
+    $profileSandboxCodex = Join-Path $resolverProfile '.codex\.sandbox-bin\codex.exe'
+    $homeSandboxCodex = Join-Path $resolverCodexHome '.sandbox-bin\codex.exe'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $profileSandboxCodex), (Split-Path -Parent $homeSandboxCodex) | Out-Null
+    New-Item -ItemType File -Path $profileSandboxCodex, $homeSandboxCodex | Out-Null
+
+    $savedUserProfile = $env:USERPROFILE
+    $savedCodexHome = $env:CODEX_HOME
+    try {
+        $env:USERPROFILE = $resolverProfile
+        $env:CODEX_HOME = $resolverCodexHome
+        Assert-Equal $homeSandboxCodex (Invoke-ResolverFromScript -ScriptPath $wrapper) 'The worker should prefer the CODEX_HOME sandbox executable.'
+        Assert-Equal $homeSandboxCodex (Invoke-ResolverFromScript -ScriptPath $statusScript) 'The status helper should prefer the CODEX_HOME sandbox executable.'
+
+        Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue
+        Assert-Equal $profileSandboxCodex (Invoke-ResolverFromScript -ScriptPath $wrapper) 'The worker should fall back to the USERPROFILE sandbox executable.'
+        Assert-Equal $profileSandboxCodex (Invoke-ResolverFromScript -ScriptPath $statusScript) 'The status helper should fall back to the USERPROFILE sandbox executable.'
+    }
+    finally {
+        $env:USERPROFILE = $savedUserProfile
+        if ($null -eq $savedCodexHome) {
+            Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:CODEX_HOME = $savedCodexHome
+        }
+    }
+
     $aliasRoot = Join-Path $testRoot 'aliases'
     # Construct non-ASCII names at runtime so Windows PowerShell 5.1 can parse
     # this UTF-8-without-BOM test file consistently.
@@ -169,6 +222,9 @@ try {
     }
     Assert-Equal 78 $authenticationExitCode 'A logged-out Codex CLI must return the login-required exit code.'
     Assert-True (($authenticationOutput -join [Environment]::NewLine).Contains('codex login')) 'A logged-out Codex CLI must tell the user how to sign in.'
+    if ([Security.Principal.WindowsIdentity]::GetCurrent().Name -match '(?i)\\CodexSandbox(?:Offline)?$') {
+        Assert-True (($authenticationOutput -join [Environment]::NewLine).Contains('approved host-execution')) 'A Codex sandbox identity must receive safe host-execution guidance.'
+    }
     Assert-True (-not (Test-Path -LiteralPath $argsFile)) 'The delegated Codex task must not launch before login succeeds.'
     $env:FAKE_CODEX_LOGGED_IN = 'true'
 
