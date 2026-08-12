@@ -27,6 +27,12 @@ param(
 
     [string]$AppendSystemPrompt,
 
+    # Keep one-shot child sessions ephemeral unless continuation was requested explicitly.
+    [switch]$PersistSession,
+
+    # Suggestion generation adds output and latency that delegated one-shot work does not need.
+    [switch]$EnablePromptSuggestions,
+
     [string]$WorkDir,
 
     # Final assistant message, encoded as UTF-8 without a BOM.
@@ -155,6 +161,8 @@ $resolvedClaude = Resolve-ClaudeExecutable $ClaudePath
 
 $claudeArgs = @('-p', '--output-format', $OutputFormat, '--permission-mode', $permissionMode)
 if ($Context -eq 'isolated') { $claudeArgs += '--safe-mode' }
+if (-not $PersistSession)     { $claudeArgs += '--no-session-persistence' }
+$claudeArgs += @('--prompt-suggestions', $(if ($EnablePromptSuggestions) { 'true' } else { 'false' }))
 if ($Model)                  { $claudeArgs += @('--model', $Model) }
 if ($Effort)                 { $claudeArgs += @('--effort', $Effort) }
 if ($AppendSystemPrompt)     { $claudeArgs += @('--append-system-prompt', $AppendSystemPrompt) }

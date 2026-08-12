@@ -71,6 +71,9 @@ param(
 
     [switch]$ApproveForMe,
 
+    # AGY headless write runs otherwise stop at command-tool approval prompts.
+    [switch]$AgySkipPermissions,
+
     [string]$AgyPath,
 
     [string]$CodexPath,
@@ -218,16 +221,40 @@ function Invoke-WrapperProcess {
 
     $process = New-Object Diagnostics.Process
     $process.StartInfo = $startInfo
+    $timedOut = $false
     try {
         if (-not $process.Start()) { throw "Failed to start the $Backend wrapper process." }
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
-        $process.WaitForExit()
+        if (-not $process.WaitForExit($TimeoutSec * 1000)) {
+            $timedOut = $true
+            try {
+                $taskKill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
+                if (Test-Path -LiteralPath $taskKill -PathType Leaf) {
+                    & $taskKill /PID $process.Id /T /F 2>$null | Out-Null
+                }
+                if (-not $process.HasExited) { $process.Kill() }
+            }
+            catch {
+                try { $process.Kill() } catch { }
+            }
+            $null = $process.WaitForExit(10000)
+        }
+        else {
+            $process.WaitForExit()
+        }
+        $stdout = $stdoutTask.Result
+        $stderr = $stderrTask.Result
+        if ($timedOut) {
+            if ($stderr -and -not $stderr.EndsWith([Environment]::NewLine)) { $stderr += [Environment]::NewLine }
+            $stderr += "The $Backend child timed out after $TimeoutSec seconds and its process tree was terminated."
+        }
         return [pscustomobject]@{
             Backend = $Backend
-            ExitCode = $process.ExitCode
-            Stdout = $stdoutTask.Result
-            Stderr = $stderrTask.Result
+            ExitCode = $(if ($timedOut) { 124 } else { $process.ExitCode })
+            Stdout = $stdout
+            Stderr = $stderr
+            TimedOut = $timedOut
         }
     }
     finally {
@@ -294,6 +321,12 @@ foreach ($candidate in @($script:primaryAgent) + @($normalizedFallbackAgents)) {
 if ($Sandbox -eq 'danger-full-access' -and $candidateAgents.Contains('agy')) {
     throw 'The dispatcher does not silently map danger-full-access to AGY. Remove AGY from the candidate chain or invoke agy.ps1 with explicit options.'
 }
+if ($AgySkipPermissions -and -not $candidateAgents.Contains('agy')) {
+    throw 'AgySkipPermissions requires AGY to be present in the candidate chain.'
+}
+if ($AgySkipPermissions -and $Sandbox -ne 'workspace-write') {
+    throw 'AgySkipPermissions requires -Sandbox workspace-write and explicit authorization for AGY writes.'
+}
 
 $resolvedOutFile = if ($OutFile) { Resolve-OutputPath $OutFile } else { $null }
 $resolvedRawFile = if ($RawFile) { Resolve-OutputPath $RawFile } else { $null }
@@ -332,6 +365,7 @@ try {
                 $parameters['PrintTimeout'] = $AgyPrintTimeout
                 $parameters['OutFile'] = $attemptOutFile
                 if ($Json)    { $parameters['OutputFormat'] = 'json' }
+                if ($AgySkipPermissions) { $parameters['SkipPermissions'] = $true }
                 if ($AgyPath) { $parameters['AgyPath'] = $AgyPath }
             }
             'codex' {

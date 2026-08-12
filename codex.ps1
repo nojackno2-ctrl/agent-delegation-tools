@@ -42,6 +42,10 @@ param(
     # Let Codex automatically review approval requests inside workspace-write.
     [switch]$ApproveForMe,
 
+    # Hard wall-clock bound for the complete child process tree.
+    [ValidateRange(1, 86400)]
+    [int]$TimeoutSec = 900,
+
     # Explicit executable override. CODEX_CLI_PATH is the environment-variable equivalent.
     [string]$CodexPath,
 
@@ -132,6 +136,34 @@ function Resolve-CodexExecutable {
     }
 
     throw 'Codex was not found in the Desktop installation or on PATH. Use -CodexPath or CODEX_CLI_PATH.'
+}
+
+# Quote one argument according to the Windows CommandLineToArgvW convention.
+function Format-WindowsArgument {
+    param([AllowEmptyString()][string]$Value)
+
+    if ($Value -eq '') { return '""' }
+    if ($Value -notmatch '[\s"]') { return $Value }
+    $escaped = $Value -replace '(\\*)"', '$1$1\"'
+    $escaped = $escaped -replace '(\\+)$', '$1$1'
+    return '"' + $escaped + '"'
+}
+
+function Stop-DelegatedProcessTree {
+    param([Diagnostics.Process]$Process)
+
+    if (-not $Process) { return }
+    try {
+        if ($Process.HasExited) { return }
+        $taskKill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
+        if (Test-Path -LiteralPath $taskKill -PathType Leaf) {
+            & $taskKill /PID $Process.Id /T /F 2>$null | Out-Null
+        }
+        if (-not $Process.HasExited) { $Process.Kill() }
+    }
+    catch {
+        try { $Process.Kill() } catch { }
+    }
 }
 
 function Test-SandboxSafePath {
@@ -246,15 +278,69 @@ if ($Ephemeral)    { $codexArgs += '--ephemeral' }
 if ($ApproveForMe) { $codexArgs += '--approve-for-me' }
 $codexArgs += $Prompt
 
+$fileName = $resolvedCodex
+$launchArgs = $codexArgs
+$extension = [IO.Path]::GetExtension($resolvedCodex).ToLowerInvariant()
+if ($extension -eq '.ps1') {
+    $fileName = Join-Path $PSHOME 'powershell.exe'
+    $launchArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $resolvedCodex) + $codexArgs
+}
+
+$argumentString = ($launchArgs | ForEach-Object { Format-WindowsArgument ([string]$_) }) -join ' '
+if ($extension -eq '.cmd' -or $extension -eq '.bat') {
+    if (-not $env:ComSpec) { throw 'ComSpec is not set; cannot launch a cmd/bat Codex shim.' }
+    $fileName = $env:ComSpec
+    $innerCommand = (Format-WindowsArgument $resolvedCodex) + ' ' + (($codexArgs | ForEach-Object { Format-WindowsArgument ([string]$_) }) -join ' ')
+    $argumentString = '/d /s /c "' + $innerCommand + '"'
+}
+
 $previousDepth = $env:AGENT_DELEGATION_DEPTH
 $exitCode = 1
+$timedOut = $false
+$stdout = ''
+$stderr = ''
+$process = $null
 try {
     $env:AGENT_DELEGATION_DEPTH = ($depth + 1).ToString()
-    & $resolvedCodex @codexArgs
-    $exitCode = $LASTEXITCODE
+
+    $startInfo = New-Object Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $fileName
+    $startInfo.Arguments = $argumentString
+    $startInfo.WorkingDirectory = $effectiveDir
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    try {
+        $startInfo.StandardOutputEncoding = [Text.Encoding]::UTF8
+        $startInfo.StandardErrorEncoding = [Text.Encoding]::UTF8
+    } catch { }
+
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $startInfo
+    if (-not $process.Start()) { throw 'Failed to start the Codex worker process.' }
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
+    if (-not $process.WaitForExit($TimeoutSec * 1000)) {
+        $timedOut = $true
+        Stop-DelegatedProcessTree $process
+        $null = $process.WaitForExit(10000)
+        $exitCode = 124
+    }
+    else {
+        $process.WaitForExit()
+        $exitCode = $process.ExitCode
+    }
+    $stdout = $stdoutTask.Result
+    $stderr = $stderrTask.Result
 }
 finally {
     $env:AGENT_DELEGATION_DEPTH = $previousDepth
+    if ($process) { $process.Dispose() }
 }
+
+if ($stdout) { [Console]::Out.Write($stdout) }
+if ($stderr) { [Console]::Error.Write($stderr) }
+if ($timedOut) { Write-Warning "Codex worker timed out after $TimeoutSec seconds and its process tree was terminated." }
 
 exit $exitCode
