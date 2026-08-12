@@ -1,6 +1,6 @@
-# Compatibility entry point. The installable Codex skill owns the implementation.
+# Compatibility entry point. The installable skill owns the implementation.
 $ErrorActionPreference = 'Stop'
-$delegationScript = Join-Path $PSScriptRoot 'skills\agent-delegation-tools\scripts\codex.ps1'
+$delegationScript = Join-Path $PSScriptRoot 'skills\agent-delegation-tools\scripts\claude.ps1'
 if (-not (Test-Path -LiteralPath $delegationScript -PathType Leaf)) {
     throw "Agent delegation script is missing: $delegationScript"
 }
