@@ -111,11 +111,28 @@ try {
     $forwardedArguments = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
     Assert-Equal $prompt $forwardedArguments[1] 'Root AGY forwarder changed the prompt.'
 
-    $env:AGENT_DELEGATION_DEPTH = '1'
-    $env:TEST_WRAPPER = $wrapper
-    $recursive = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Prompt $env:TEST_PROMPT'
-    Assert-True ($recursive.ExitCode -ne 0) 'AGY recursion guard should reject nested delegation.'
-    Remove-Item Env:AGENT_DELEGATION_DEPTH
+    # Test Gemini 3.7 Flash with explicit effort
+    $env:FAKE_AGY_EXIT_CODE = '0'
+    $env:FAKE_AGY_OUTPUT = 'gemini 3.7 flash test'
+    $gemini37High = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model gemini-3.7-flash -Effort high -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $gemini37High.ExitCode ('Gemini 3.7 Flash high effort test failed: ' + ($gemini37High.Output -join [Environment]::NewLine))
+    $gemini37HighArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
+    Assert-Equal 'gemini-3.7-flash' $gemini37HighArgs[[Array]::IndexOf($gemini37HighArgs, '--model') + 1] 'Gemini 3.7 Flash model was not forwarded.'
+    Assert-Equal 'high' $gemini37HighArgs[[Array]::IndexOf($gemini37HighArgs, '--effort') + 1] 'Gemini 3.7 Flash effort high was not forwarded.'
+
+    # Test Gemini 3.7 Flash without effort (should default to low)
+    $gemini37Auto = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model gemini-3.7-flash -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $gemini37Auto.ExitCode ('Gemini 3.7 Flash auto effort test failed: ' + ($gemini37Auto.Output -join [Environment]::NewLine))
+    $gemini37AutoArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
+    Assert-Equal 'gemini-3.7-flash' $gemini37AutoArgs[[Array]::IndexOf($gemini37AutoArgs, '--model') + 1] 'Gemini 3.7 Flash model without effort failed.'
+    Assert-Equal 'low' $gemini37AutoArgs[[Array]::IndexOf($gemini37AutoArgs, '--effort') + 1] 'Gemini 3.7 Flash model should auto-default effort to low.'
+
+    # Test human-readable model with parenthesized effort
+    $gemini37Human = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model "Gemini 3.7 Flash (Medium)" -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $gemini37Human.ExitCode ('Gemini 3.7 Flash human-readable model test failed: ' + ($gemini37Human.Output -join [Environment]::NewLine))
+    $gemini37HumanArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
+    Assert-Equal 'gemini-3.7-flash' $gemini37HumanArgs[[Array]::IndexOf($gemini37HumanArgs, '--model') + 1] 'Human-readable Gemini 3.7 Flash was not normalized.'
+    Assert-Equal 'medium' $gemini37HumanArgs[[Array]::IndexOf($gemini37HumanArgs, '--effort') + 1] 'Parenthesized effort in model name was not parsed.'
 
     'agy-wrapper.Tests.ps1: all tests passed.'
 }

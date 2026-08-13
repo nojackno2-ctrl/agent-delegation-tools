@@ -141,10 +141,55 @@ $resolvedAddDirs = @($AddDir | ForEach-Object {
 $resolvedOutFile = if ($OutFile) { Resolve-OutputPath $OutFile } else { $null }
 $resolvedAgy = Resolve-AgyExecutable $AgyPath
 
+$effectiveModel = $Model
+$effectiveEffort = $Effort
+
+if ($effectiveModel) {
+    if ($effectiveModel -match '^(?i)gemini[ -]?3\.7[ -]?flash\s*\((high|medium|low)\)$') {
+        $effectiveModel = 'gemini-3.7-flash'
+        if (-not $effectiveEffort) { $effectiveEffort = $Matches[1].ToLowerInvariant() }
+    }
+    elseif ($effectiveModel -match '^(?i)gemini[ -]?3\.6[ -]?flash\s*\((high|medium|low)\)$') {
+        $effectiveModel = 'gemini-3.6-flash'
+        if (-not $effectiveEffort) { $effectiveEffort = $Matches[1].ToLowerInvariant() }
+    }
+    elseif ($effectiveModel -match '^(?i)gemini[ -]?3\.5[ -]?flash\s*\((high|medium|low)\)$') {
+        $effectiveModel = 'gemini-3.5-flash'
+        if (-not $effectiveEffort) { $effectiveEffort = $Matches[1].ToLowerInvariant() }
+    }
+    elseif ($effectiveModel -match '^(?i)gemini[ -]?3\.1[ -]?pro\s*\((high|low)\)$') {
+        $effectiveModel = 'gemini-3.1-pro'
+        if (-not $effectiveEffort) { $effectiveEffort = $Matches[1].ToLowerInvariant() }
+    }
+    elseif ($effectiveModel -match '^(?i)gemini[ -]?3\.7[ -]?flash-thinking$') {
+        $effectiveModel = 'gemini-3.7-flash'
+        if (-not $effectiveEffort) { $effectiveEffort = 'high' }
+    }
+    elseif ($effectiveModel -match '^(?i)(?:gemini[ -]?)?3\.7[ -]?flash$') {
+        $effectiveModel = 'gemini-3.7-flash'
+    }
+    elseif ($effectiveModel -match '^(?i)(?:gemini[ -]?)?3\.6[ -]?flash$') {
+        $effectiveModel = 'gemini-3.6-flash'
+    }
+    elseif ($effectiveModel -match '^(?i)(?:gemini[ -]?)?3\.5[ -]?flash$') {
+        $effectiveModel = 'gemini-3.5-flash'
+    }
+    elseif ($effectiveModel -match '^(?i)(?:gemini[ -]?)?3\.1[ -]?pro$') {
+        $effectiveModel = 'gemini-3.1-pro'
+    }
+
+    if ($effectiveModel -match '^(?i)gemini-3\.[567]-flash$' -and -not $effectiveEffort) {
+        $effectiveEffort = 'low'
+    }
+    elseif ($effectiveModel -match '^(?i)gemini-3\.1-pro$' -and -not $effectiveEffort) {
+        $effectiveEffort = 'low'
+    }
+}
+
 $agyArgs = @('-p', $Prompt, '--mode', $effectiveMode, '--output-format', $OutputFormat, '--print-timeout', $PrintTimeout)
 foreach ($directory in $resolvedAddDirs) { $agyArgs += @('--add-dir', $directory) }
-if ($Model)           { $agyArgs += @('--model', $Model) }
-if ($Effort)          { $agyArgs += @('--effort', $Effort) }
+if ($effectiveModel)  { $agyArgs += @('--model', $effectiveModel) }
+if ($effectiveEffort) { $agyArgs += @('--effort', $effectiveEffort) }
 if ($SkipPermissions) { $agyArgs += '--dangerously-skip-permissions' }
 if ($Sandbox)         { $agyArgs += '--sandbox' }
 
@@ -206,6 +251,25 @@ if ($stderr) {
     }
     $combinedOutput += $stderr
 }
+
+$isAuthFailure = ($exitCode -ne 0) -and ($combinedOutput -match '(?i)(Authentication required|Please sign in|not logged in|sign in)')
+if ($isAuthFailure) {
+    $exitCode = 78
+    $loginGuidance = "Antigravity CLI is not logged in. Run 'agy' interactively, complete sign-in, then retry the delegated task."
+    if (-not $combinedOutput.Contains("Run 'agy' interactively")) {
+        if ($combinedOutput -and -not $combinedOutput.EndsWith([Environment]::NewLine)) {
+            $combinedOutput += [Environment]::NewLine
+        }
+        $combinedOutput += $loginGuidance
+    }
+    if ($stderr -and -not $stderr.Contains("Run 'agy' interactively")) {
+        $stderr += [Environment]::NewLine + $loginGuidance
+    }
+    elseif (-not $stderr) {
+        $stderr = $loginGuidance
+    }
+}
+
 if ($resolvedOutFile) {
     $utf8NoBom = New-Object Text.UTF8Encoding($false)
     [IO.File]::WriteAllText($resolvedOutFile, $combinedOutput, $utf8NoBom)
