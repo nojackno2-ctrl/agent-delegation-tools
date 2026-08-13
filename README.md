@@ -28,7 +28,7 @@
 
 | 後端 / 工具 | 核心腳本 | 核心專長與適用情境 | 預設模型 | 額度消耗來源 |
 |---|---|---|---|---|
-| **Google Antigravity CLI** | [`agy.ps1`](./agy.ps1) | 超長上下文閱讀、快速 Scaffolding、架構模組分析、Plan 模式規劃 | `gemini-3.6-flash-low` (可選 Pro / Claude / GPT) | Google Antigravity |
+| **Google Antigravity CLI** | [`agy.ps1`](./agy.ps1) | 超長上下文閱讀、快速 Scaffolding、架構模組分析、Plan 模式規劃 | `gemini-3.7-flash` (支援 Low/Medium/High 推理，可選 Pro / Claude / GPT) | Google Antigravity |
 | **OpenAI Codex CLI** | [`codex.ps1`](./codex.ps1) | 跨多檔案複雜實作、大型重構、重度編碼（內建 Windows 中文路徑 Junction 修復） | `gpt-5.6-sol` (可選 o-series) | OpenAI / ChatGPT |
 | **Anthropic Claude Code** | [`claude.ps1`](./claude.ps1) | 深度邏輯審查、安全邊界掃描、架構對齊；支援工作階段接續（Resume） | `sonnet` / `opus` | Anthropic Claude |
 | **統一智慧調度器** | [`delegate.ps1`](./delegate.ps1) | 依任務類型自動路由：`analysis`/`scaffolding` → AGY，`review` → Claude，`implementation` → Codex | 依任務自動選型 | 依選用後端 |
@@ -62,10 +62,11 @@
   ┌───────────────────┐             ┌───────────────────┐           ┌───────────────────┐
   │  agy.ps1 (AGY)    │             │  codex.ps1 (Codex)│           │ claude.ps1 (Claude)│
   ├───────────────────┤             ├───────────────────┤           ├───────────────────┤
-  │ * 極速 Flash 模型  │             │ * 中文路徑Junction│           │ * Isolated 脈絡   │
-  │ * Plan 規劃模式   │             │ * workspace-write │           │   節省 90% Tokens │
-  │ * UTF-8 輸出管道  │             │ * stdin 防掛死    │           │ * Resume 多輪工作 │
-  │ * Stdin $null 導向│             │ * UTF-8 OutFile   │           │ * 900s 逾時/防遞迴│
+  │ * Gemini 3.7 Flash│             │ * 中文路徑Junction│           │ * Isolated 脈絡   │
+  │ * Low/Med/High推理│             │ * workspace-write │           │   節省 90% Tokens │
+  │ * Plan 規劃模式   │             │ * stdin 防掛死    │           │ * Resume 多輪工作 │
+  │ * UTF-8 輸出管道  │             │ * UTF-8 OutFile   │           │ * 900s 逾時/防遞迴│
+  │ * Stdin $null 導向│             │                   │           │                   │
   └───────────────────┘             └───────────────────┘           └───────────────────┘
 ```
 
@@ -93,7 +94,7 @@
 ### 1. 統一智慧調度器 (`delegate.ps1`)
 
 ```powershell
-# 自動依任務類型選擇最佳子代理（analysis 自動導向 AGY Flash；implementation 導向 Codex）
+# 自動依任務類型選擇最佳子代理（analysis 自動導向 AGY Gemini 3.7 Flash；implementation 導向 Codex）
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\delegate.ps1 -TaskType analysis "分析 src/core/auth.ts 的模組依賴關係"
 
 # 指定子代理後端與沙箱模式
@@ -106,14 +107,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\delegate.ps1 -TaskType
 ### 2. Antigravity CLI 子代理 (`agy.ps1`)
 
 ```powershell
-# 快速執行分析任務（預設 gemini-3.6-flash-low，速度極快、成本極低）
+# 快速執行分析任務（預設 gemini-3.7-flash，速度極快、成本極低）
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\agy.ps1 "分析當前專案模組架構"
 
 # 使用 Plan 規劃模式（唯讀，不變更任何檔案）並輸出至檔案
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\agy.ps1 -Mode plan -OutFile "$env:TEMP\agy-plan.txt" "制定資料庫遷移與重構計畫"
 
-# 切換高階推理模型與指定推理強度
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\agy.ps1 -Model gemini-3.1-pro-low -Effort high "審查高複雜度演算法之正確性"
+# 指定 Gemini 3.7 Flash 並啟用高推理強度（亦可使用 -Model gemini-3.1-pro -Effort high）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\agy.ps1 -Model gemini-3.7-flash -Effort high "審查高複雜度演算法之正確性"
 ```
 
 ### 3. OpenAI Codex CLI 子代理 (`codex.ps1`)

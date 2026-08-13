@@ -1,5 +1,29 @@
 # AI handoff
 
+## 2026-08-14 Gemini 3.7 Flash integration and verification
+
+- **Objective**: Added Gemini 3.7 Flash (`gemini-3.7-flash`, `gemini-3.7-flash-high`, `gemini-3.7-flash-low`, `gemini-3.7-flash-medium`) capability to the `agent-delegation-tools` skill package with reasoning effort handling and automated default fallback.
+- **Key Enhancements**:
+  - `agy.ps1` & `skills/agent-delegation-tools/scripts/agy.ps1`:
+    - Added model normalization and alias parsing for `gemini-3.7-flash` and its reasoning effort tiers (`low`, `medium`, `high`), including parenthesized formats (`Gemini 3.7 Flash (High)`) and thinking aliases (`gemini-3.7-flash-thinking`).
+    - Handled AGY CLI `--effort` requirement: base models (`gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.1-pro`) automatically default `--effort` to `low` when `-Effort` is omitted, eliminating `invalid model selection: requires --effort` crashes.
+    - Added login failure detection mapping unauthenticated responses to exit code `78` with clear interactive sign-in guidance.
+  - `skills/agent-delegation-tools/SKILL.md`, `.agents/skills/...`, `.claude/skills/...`:
+    - Updated documentation and examples featuring `gemini-3.7-flash` and `-Effort high|medium|low` for Antigravity workers and the unified dispatcher (`delegate.ps1`).
+  - `README.md`:
+    - Updated the backend matrix to list `gemini-3.7-flash` as the default/recommended AGY model.
+    - Updated quick-start CLI examples and architecture diagrams.
+  - `install.ps1`:
+    - Synchronized updated skill package to all host skill directories (`~/.codex/skills`, `~/.agents/skills`, `~/.claude/skills`); 100% SHA-256 integrity verified.
+- **Verification Performed**:
+  - `validate.ps1`: 51 passes, 0 failures, 0 parser errors, 100% SHA-256 parity across canonical scripts, wrappers, and host skill installs.
+  - `tests/agy-wrapper.Tests.ps1`: All unit tests passed, including explicit effort forwarding, auto-default effort to low, and human-readable model parsing.
+  - Live CLI tests:
+    - Direct `agy.ps1 -Model gemini-3.7-flash -Effort high`: returned `AGY_GEMINI_37_OK`, exit 0.
+    - Direct `agy.ps1 -Model gemini-3.7-flash` (auto effort default): returned `AGY_GEMINI_37_AUTO_EFFORT_OK`, exit 0.
+    - Dispatcher `delegate.ps1 -Agent agy -AgyModel gemini-3.7-flash -AgyEffort high`: returned `DELEGATE_GEMINI_37_OK`, exit 0.
+  - `git diff --check`: 0 errors.
+
 ## 2026-08-12 GitHub synchronization
 
 - Pushed canonical synchronization commit `ae5161c` to GitHub `master`. Post-push `install.ps1 -DryRun` found Codex, Agents/AGY, and Claude installs already identical: 0 added, 0 updated, 8 unchanged per target, so no redundant write was performed.
