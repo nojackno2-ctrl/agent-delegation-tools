@@ -70,12 +70,12 @@ When the user asks a host to use its matching CLI as a subagent, call the matchi
 
 ```powershell
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'agy.ps1') `
-    -WorkDir 'C:\path\to\project' -Mode plan -Model '<agy-model>' -Effort high `
+    -WorkDir 'C:\path\to\project' -Mode plan -Model 'gemini-3.7-flash' -Effort high `
     -OutFile "$env:TEMP\agy-worker.txt" `
     'Inspect the dependency flow. Report file evidence. Do not edit files.'
 ```
 
-Use `-AddDir` for additional workspaces. Use `-SkipPermissions` only with an explicit write mode. AGY enforces `-PrintTimeout` itself.
+Use `gemini-3.7-flash` (with `-Effort low|medium|high`, `gemini-3.7-flash-high`, or `gemini-3.7-flash-low`) for fast scaffolding, broad analysis, or deep reasoning plans. Use `-AddDir` for additional workspaces. Use `-SkipPermissions` only with an explicit write mode. AGY enforces `-PrintTimeout` itself.
 
 ### Codex CLI worker
 
@@ -107,7 +107,7 @@ The wrapper sends the prompt through UTF-8 stdin, disables prompt suggestions, a
     -TimeoutSec 900 `
     -CodexModel '<codex-model>' -CodexEffort xhigh `
     -ClaudeModel '<claude-model>' -ClaudeEffort high `
-    -AgyModel '<agy-model>' -AgyEffort high -OutFile "$env:TEMP\worker.txt" `
+    -AgyModel 'gemini-3.7-flash' -AgyEffort high -OutFile "$env:TEMP\worker.txt" `
     'Review the changed API surface. Do not edit files.'
 ```
 
