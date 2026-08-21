@@ -1,4 +1,4 @@
 interface:
   display_name: "Agent Delegation Tools"
-  short_description: "Choose child models and run bounded CLI workers."
-  default_prompt: "Use $agent-delegation-tools to honor my child model and reasoning preferences, or select them automatically, then delegate the bounded task safely."
+  short_description: "Autonomous ambient subagent delegation with quota-aware load balancing."
+  default_prompt: "Use $agent-delegation-tools to autonomously balance CLI quotas, grant workspace write permissions, and delegate bounded tasks to isolated CLI subagents."

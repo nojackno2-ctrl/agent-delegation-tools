@@ -241,6 +241,32 @@ try {
     $env:FAKE_CLAUDE_OUTPUT = 'review result'
 
     Clear-BackendEvidence $evidenceFiles
+    $env:FAKE_STATUS_RESPONSE = @'
+[
+  { "agent": "codex", "availability": "available", "windows": [{ "name": "codex", "remainingPercent": 0 }] },
+  { "agent": "agy", "availability": "available", "windows": [{ "name": "agy (Gemini)", "remainingPercent": 85 }] },
+  { "agent": "claude", "availability": "unavailable", "windows": [] }
+]
+'@
+    $rebalanced = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType implementation -BalanceQuota -AgyPath $env:TEST_AGY -ClaudePath $env:TEST_CLAUDE -CodexPath $env:TEST_CODEX -WorkDir $env:TEST_WORKDIR -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $rebalanced.ExitCode ('BalanceQuota rebalance failed: ' + ($rebalanced.Output -join [Environment]::NewLine))
+    Assert-True (Test-Path -LiteralPath $agyArgsFile -PathType Leaf) 'BalanceQuota should rebalance depleted Codex to healthy AGY.'
+    Assert-True (-not (Test-Path -LiteralPath $codexArgsFile)) 'BalanceQuota must not launch depleted Codex.'
+
+    Clear-BackendEvidence $evidenceFiles
+    $env:FAKE_STATUS_RESPONSE = @'
+[
+  { "agent": "codex", "availability": "available", "windows": [{ "name": "codex", "remainingPercent": 90 }] },
+  { "agent": "agy", "availability": "available", "windows": [{ "name": "agy (Gemini)", "remainingPercent": 85 }] },
+  { "agent": "claude", "availability": "available", "windows": [{ "name": "claude (5h)", "remainingPercent": 95 }] }
+]
+'@
+    $healthyImplementation = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType implementation -BalanceQuota -AgyPath $env:TEST_AGY -ClaudePath $env:TEST_CLAUDE -CodexPath $env:TEST_CODEX -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $healthyImplementation.ExitCode ('Healthy BalanceQuota dispatch failed: ' + ($healthyImplementation.Output -join [Environment]::NewLine))
+    Assert-True (Test-Path -LiteralPath $codexArgsFile -PathType Leaf) 'Healthy BalanceQuota should route implementation to Codex.'
+    Remove-Item Env:FAKE_STATUS_RESPONSE
+
+    Clear-BackendEvidence $evidenceFiles
     $env:AGENT_DELEGATION_DEPTH = '1'
     $env:TEST_WRAPPER = $wrapper
     $recursive = Invoke-EncodedChild '& $env:TEST_WRAPPER -Agent agy -AgyPath $env:TEST_AGY -WorkDir $env:TEST_WORKDIR -Prompt $env:TEST_PROMPT'
@@ -251,7 +277,7 @@ try {
     'delegate-wrapper.Tests.ps1: all tests passed.'
 }
 finally {
-    foreach ($name in @('TEST_WRAPPER','TEST_AGY','TEST_CLAUDE','TEST_CODEX','TEST_WORKDIR','TEST_ADDDIR','TEST_OUTFILE','TEST_PROMPT','FAKE_AGY_ARGS_FILE','FAKE_AGY_EXIT_CODE','FAKE_AGY_OUTPUT','FAKE_AGY_SLEEP_MS','FAKE_CLAUDE_ARGS_FILE','FAKE_CLAUDE_PROMPT_FILE','FAKE_CLAUDE_CWD_FILE','FAKE_CLAUDE_DEPTH_FILE','FAKE_CLAUDE_EXIT_CODE','FAKE_CLAUDE_OUTPUT','FAKE_CLAUDE_ERROR','FAKE_CLAUDE_SLEEP_MS','FAKE_CLAUDE_LOGGED_IN','FAKE_CODEX_ARGS_FILE','FAKE_CODEX_EXIT_CODE','FAKE_CODEX_OUTPUT','FAKE_CODEX_ERROR','FAKE_CODEX_SLEEP_MS','FAKE_CODEX_LOGGED_IN','AGENT_DELEGATION_DEPTH')) {
+    foreach ($name in @('TEST_WRAPPER','TEST_AGY','TEST_CLAUDE','TEST_CODEX','TEST_WORKDIR','TEST_ADDDIR','TEST_OUTFILE','TEST_PROMPT','FAKE_AGY_ARGS_FILE','FAKE_AGY_EXIT_CODE','FAKE_AGY_OUTPUT','FAKE_AGY_SLEEP_MS','FAKE_CLAUDE_ARGS_FILE','FAKE_CLAUDE_PROMPT_FILE','FAKE_CLAUDE_CWD_FILE','FAKE_CLAUDE_DEPTH_FILE','FAKE_CLAUDE_EXIT_CODE','FAKE_CLAUDE_OUTPUT','FAKE_CLAUDE_ERROR','FAKE_CLAUDE_SLEEP_MS','FAKE_CLAUDE_LOGGED_IN','FAKE_CODEX_ARGS_FILE','FAKE_CODEX_EXIT_CODE','FAKE_CODEX_OUTPUT','FAKE_CODEX_ERROR','FAKE_CODEX_SLEEP_MS','FAKE_CODEX_LOGGED_IN','FAKE_STATUS_RESPONSE','AGENT_DELEGATION_DEPTH')) {
         Remove-Item -LiteralPath ("Env:$name") -ErrorAction SilentlyContinue
     }
     if ($testRoot.StartsWith($safeTempRoot, [StringComparison]::OrdinalIgnoreCase)) {
