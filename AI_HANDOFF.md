@@ -1,5 +1,56 @@
 # AI handoff
 
+## 2026-08-21 Skill documentation sync with shipped status and sign-in behavior
+
+- **Objective**: Bring the skill instructions in line with the code that already shipped in the working tree, so a host reading SKILL.md sees the real `status.ps1` contract and the exit-`78` sign-in path.
+- **Changes**:
+  - `skills/agent-delegation-tools/SKILL.md` (mirrored byte-identically to `.agents/` and `.claude/` project copies):
+    - Frontmatter: description now advertises live subscription-usage inspection for Codex, Claude, and Antigravity, plus a signed-out delegation CLI, instead of Codex-only usage.
+    - Usage section: documented the `status.ps1` parameter surface (`-Agent`, `-TimeoutSec`, `-WorkDir`, `-CodexPath`, text vs `-Json`) and the record contract (`agent`, `availability`, `message`, `windows[]` with `name`, `usedPercent`, `remainingPercent`, `resetsAt`, `resetsAtUnix`); restored the rule that an `unavailable` result is not proof of exhaustion.
+    - Codex worker section: documented executable resolution order (`-CodexPath`/`CODEX_CLI_PATH`, then `.sandbox-bin` under `CODEX_HOME`/`~/.codex`, then the Desktop install, then PATH).
+    - New "Handle a signed-out CLI" section: exit `78` semantics, per-provider sign-in commands, no dispatcher fallback for it, and no API-key substitution without user authorization.
+  - `install.ps1` run to resync the three personal installs (`~/.codex`, `~/.agents`, `~/.claude`): 1 file updated per host, 7 unchanged, every copy hash-verified.
+  - User-scope `~/.claude/skills/agent-delegation/SKILL.md` quota section: replaced the stale claim that no backend can report remaining quota with the `status.ps1` procedure for all three pools, the `unavailable` caveat, and the auth-vs-quota distinction (exit `78`).
+- **Verification Performed**:
+  - `validate.ps1`: 51 passes, 0 failures, 1 skip; SHA-256 parity restored across canonical, project, and global copies (it failed on 3 stale global SKILL.md copies before `install.ps1`).
+  - No script behavior was changed in this pass; the edits are documentation only.
+
+## 2026-08-21 Subscription & Quota Usage Integration across Codex, Claude Code, and Antigravity
+
+- **Objective**: Integrated real-time subscription / quota usage querying logic into `agent-delegation-tools` (`status.ps1`) based on the mechanism extracted from `C:\離線儲存\程式設計\AI倒數喚醒`, and unified authentication failure detection across all wrappers.
+- **Key Enhancements**:
+  - `status.ps1` & `skills/agent-delegation-tools/scripts/status.ps1`:
+    - **Codex**: Preserved and refined stdio JSON-RPC query (`app-server` -> `account/rateLimits/read`), retrieving primary and secondary rate limit windows without starting a model turn. Added sandbox-bin executable resolution (`$env:CODEX_HOME\.sandbox-bin\codex.exe` and `$env:USERPROFILE\.codex\.sandbox-bin\codex.exe`).
+    - **Claude Code**: Added `Get-ClaudeStatus` reading OAuth token from `~/.claude/.credentials.json` (or `$env:CLAUDE_CONFIG_DIR/.credentials.json`) and querying Anthropic OAuth endpoint `https://api.anthropic.com/api/oauth/usage`. Extracts 5-hour (`Claude (5h)`) and 7-day (`Claude (7d)`) usage windows with utilization percentages and ISO reset timestamps.
+    - **Antigravity (AGY)**: Added `Get-AgyStatus` detecting the live `language_server` process, parsing its command line for `--csrf_token <token>`, detecting active HTTPS listening port via `Get-NetTCPConnection` / logs, and issuing POST RPC to `/exa.language_server_pb.LanguageServerService/GetCascadeModelConfigData`. Parses model configurations and groups quotas into `agy (Gemini)` and `agy (Claude / GPT)` pools with reset timestamps.
+    - **Error Handling & TLS**: Handled .NET Framework 4.8 / Windows PowerShell 5.1 TLS 1.2 negotiation and scoped self-signed certificate validation exclusively to local RPC queries without interfering with public endpoints. Structured errors (e.g. HTTP 429 rate limit or missing credentials) return structured `unavailable` states with descriptive messages without crashing.
+  - `agy.ps1`, `claude.ps1`, `codex.ps1` & Canonical Wrappers:
+    - Standardized authentication failure detection across all three wrappers: unauthenticated invocations detect login error patterns and return standard exit code `78` (`EX_CONFIG`) with explicit sign-in guidance (`claude auth login`, `codex login`, `agy`).
+  - `tests/*.Tests.ps1`:
+    - `tests/status.Tests.ps1`: Comprehensive unit tests covering all three providers (Codex, Claude, AGY), mock JSON response parsing (`$env:FAKE_CLAUDE_STATUS_RESPONSE`, `$env:FAKE_AGY_STATUS_RESPONSE`), single-agent and multi-agent queries, text and JSON output rendering, and timeout/error handling.
+    - Updated and synchronized `claude-wrapper.Tests.ps1`, `codex-wrapper.Tests.ps1`, `delegate-wrapper.Tests.ps1`, `install.Tests.ps1`, and `parallel.Tests.ps1` to validate current security defaults and wrapper contracts.
+  - `skills/agent-delegation-tools/SKILL.md`, `.agents/...`, `.claude/...`:
+    - Updated documentation to describe real-time quota reading for all three providers.
+  - `README.md`:
+    - Added CLI usage examples and parameter table entries for `status.ps1`.
+  - `install.ps1`:
+    - Synchronized updated skill package and wrappers to all host skill directories (`~/.codex/skills`, `~/.agents/skills`, `~/.claude/skills`).
+- **Verification Performed**:
+  - `tests/*.Tests.ps1`: 100% passed across all 7 test suites:
+    - `agy-wrapper.Tests.ps1`: all tests passed.
+    - `claude-wrapper.Tests.ps1`: all tests passed.
+    - `codex-wrapper.Tests.ps1`: all tests passed.
+    - `delegate-wrapper.Tests.ps1`: all tests passed.
+    - `install.Tests.ps1`: all tests passed.
+    - `parallel.Tests.ps1`: all tests passed.
+    - `status.Tests.ps1`: all tests passed.
+  - `validate.ps1`: 51 passes, 0 failures, 0 parser errors, 100% SHA-256 parity across all canonical scripts, root wrappers, and installed skills.
+  - Live Probes on Host:
+    - `codex`: Returned real-time primary rate-limit window with reset time.
+    - `agy`: Returned real-time `agy (Gemini)` (91% remaining) and `agy (Claude / GPT)` (100% remaining) with reset timestamps from active `language_server` RPC.
+    - `claude`: Connected to Anthropic OAuth usage endpoint, correctly authenticated, and formatted live responses.
+  - `git diff --check`: 0 errors.
+
 ## 2026-08-14 Gemini 3.7 Flash integration and verification
 
 - **Objective**: Added Gemini 3.7 Flash (`gemini-3.7-flash`, `gemini-3.7-flash-high`, `gemini-3.7-flash-low`, `gemini-3.7-flash-medium`) capability to the `agent-delegation-tools` skill package with reasoning effort handling and automated default fallback.

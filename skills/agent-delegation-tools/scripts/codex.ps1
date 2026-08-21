@@ -117,6 +117,15 @@ function Resolve-CodexExecutable {
         return $item.FullName
     }
 
+    if ($env:CODEX_HOME) {
+        $sandboxCodex = Join-Path $env:CODEX_HOME '.sandbox-bin\codex.exe'
+        if (Test-Path -LiteralPath $sandboxCodex -PathType Leaf) { return $sandboxCodex }
+    }
+    if ($env:USERPROFILE) {
+        $sandboxCodex = Join-Path $env:USERPROFILE '.codex\.sandbox-bin\codex.exe'
+        if (Test-Path -LiteralPath $sandboxCodex -PathType Leaf) { return $sandboxCodex }
+    }
+
     # Prefer the Desktop-managed CLI. The WindowsApps PATH alias can be discoverable
     # by Get-Command while its package ACL still rejects direct child-process launch.
     if ($env:LOCALAPPDATA) {
@@ -337,6 +346,20 @@ try {
 finally {
     $env:AGENT_DELEGATION_DEPTH = $previousDepth
     if ($process) { $process.Dispose() }
+}
+
+$isAuthFailure = ($exitCode -ne 0) -and ($stdout + "`n" + $stderr -match '(?i)(Authentication required|Please sign in|not logged in|codex login|sign in to your account|unauthorized)')
+if ($isAuthFailure) {
+    $exitCode = 78
+    $loginGuidance = "Codex CLI is not logged in. Run 'codex login' interactively, complete sign-in, then retry the delegated task."
+    if ($stdout -and -not $stdout.EndsWith([Environment]::NewLine)) { $stdout += [Environment]::NewLine }
+    $stdout += $loginGuidance
+    if ($stderr -and -not $stderr.Contains("codex login")) {
+        $stderr += [Environment]::NewLine + $loginGuidance
+    }
+    elseif (-not $stderr) {
+        $stderr = $loginGuidance
+    }
 }
 
 if ($stdout) { [Console]::Out.Write($stdout) }

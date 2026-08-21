@@ -8,13 +8,17 @@ param(
 $ErrorActionPreference = 'Stop'
 $utf8NoBom = New-Object Text.UTF8Encoding($false)
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
-if (-not $p -and $Arguments.Count -ge 2 -and [string]$Arguments[0] -eq 'auth' -and [string]$Arguments[1] -eq 'status') {
+if ($Arguments.Count -ge 2 -and [string]$Arguments[0] -eq 'auth' -and [string]$Arguments[1] -eq 'status') {
     if ($env:FAKE_CLAUDE_LOGGED_IN -eq 'false') {
         [Console]::Out.Write('{"loggedIn":false}')
         exit 1
     }
     [Console]::Out.Write('{"loggedIn":true}')
     exit 0
+}
+if ($env:FAKE_CLAUDE_LOGGED_IN -eq 'false') {
+    [Console]::Error.Write("Authentication required: Please run 'claude auth login' to sign in.")
+    exit 1
 }
 $prompt = [Console]::In.ReadToEnd()
 $recordedArguments = @()

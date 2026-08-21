@@ -1,6 +1,7 @@
 # Reads provider usage capability without starting a model turn.
-# Codex exposes account/rateLimits/read through app-server; AGY and Claude do not
-# currently expose an equivalent machine-readable account-usage interface.
+# Codex exposes account/rateLimits/read through app-server.
+# Claude exposes /api/oauth/usage through Anthropic OAuth credentials.
+# Antigravity exposes GetCascadeModelConfigData through language_server RPC.
 
 [CmdletBinding()]
 param(
@@ -22,6 +23,8 @@ param(
 $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 $utf8NoBom = New-Object Text.UTF8Encoding($false)
+try { Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue } catch { }
+try { [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12 } catch { }
 
 function Resolve-ExistingDirectory {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -59,6 +62,15 @@ function Resolve-CodexExecutable {
             throw "CodexPath must identify an executable file: $explicitPath"
         }
         return $item.FullName
+    }
+
+    if ($env:CODEX_HOME) {
+        $sandboxCodex = Join-Path $env:CODEX_HOME '.sandbox-bin\codex.exe'
+        if (Test-Path -LiteralPath $sandboxCodex -PathType Leaf) { return $sandboxCodex }
+    }
+    if ($env:USERPROFILE) {
+        $sandboxCodex = Join-Path $env:USERPROFILE '.codex\.sandbox-bin\codex.exe'
+        if (Test-Path -LiteralPath $sandboxCodex -PathType Leaf) { return $sandboxCodex }
     }
 
     if ($env:LOCALAPPDATA) {
@@ -124,18 +136,6 @@ function Read-ProtocolResponse {
         }
         try { $record = $line | ConvertFrom-Json } catch { continue }
         if ($null -ne $record.id -and [int]$record.id -eq $ResponseId) { return $record }
-    }
-}
-
-function New-UnsupportedStatus {
-    param([Parameter(Mandatory = $true)][string]$Backend)
-
-    return [ordered]@{
-        agent = $Backend
-        availability = 'unsupported'
-        observedAt = [DateTimeOffset]::Now.ToString('o')
-        message = 'The CLI exposes no machine-readable account-usage interface; no value was estimated.'
-        windows = @()
     }
 }
 
@@ -249,6 +249,401 @@ function Get-CodexStatus {
     }
 }
 
+function Parse-ClaudeUsageResponse {
+    param(
+        [Parameter(Mandatory = $true)][string]$RawJson,
+        [Parameter(Mandatory = $true)][DateTimeOffset]$ObservedAt
+    )
+
+    $json = $RawJson | ConvertFrom-Json
+    if ($null -ne $json.error) {
+        $msg = if ($json.error.message) { $json.error.message } else { [string]$json.error }
+        return [ordered]@{
+            agent = 'claude'
+            availability = 'unavailable'
+            observedAt = $ObservedAt.ToString('o')
+            message = "Claude usage query failed: $msg"
+            windows = @()
+        }
+    }
+
+    $windowDefs = @(
+        @{ prop = 'five_hour';            name = 'Claude (5h)';           duration = 300 }
+        @{ prop = 'seven_day';            name = 'Claude (7d)';           duration = 10080 }
+        @{ prop = 'seven_day_opus';       name = 'Claude Opus (7d)';      duration = 10080 }
+        @{ prop = 'seven_day_sonnet';     name = 'Claude Sonnet (7d)';    duration = 10080 }
+        @{ prop = 'seven_day_oauth_apps'; name = 'Claude OAuth Apps (7d)';duration = 10080 }
+        @{ prop = 'seven_day_cowork';     name = 'Claude Cowork (7d)';    duration = 10080 }
+    )
+
+    $windows = New-Object 'Collections.Generic.List[object]'
+    foreach ($def in $windowDefs) {
+        $propName = $def.prop
+        $win = $json.$propName
+        if ($null -eq $win -or $null -eq $win.utilization) { continue }
+
+        $used = [Math]::Max(0, [Math]::Min(100, [int][Math]::Round([double]$win.utilization)))
+        $resetIso = if ($win.resets_at) { [string]$win.resets_at } else { $null }
+        $resetUnix = if ($resetIso) {
+            try { [DateTimeOffset]::Parse($resetIso).ToUnixTimeSeconds() } catch { $null }
+        } else { $null }
+
+        $windows.Add([ordered]@{
+            name = $def.name
+            usedPercent = $used
+            remainingPercent = 100 - $used
+            windowDurationMins = $def.duration
+            resetsAt = $resetIso
+            resetsAtUnix = $resetUnix
+        })
+    }
+
+    if ($windows.Count -eq 0) {
+        return [ordered]@{
+            agent = 'claude'
+            availability = 'unavailable'
+            observedAt = $ObservedAt.ToString('o')
+            message = 'Claude responded but returned no recognizable usage windows.'
+            windows = @()
+        }
+    }
+
+    return [ordered]@{
+        agent = 'claude'
+        availability = 'available'
+        observedAt = $ObservedAt.ToString('o')
+        message = 'Read from Claude OAuth usage endpoint https://api.anthropic.com/api/oauth/usage.'
+        windows = [object[]]($windows | ForEach-Object { $_ })
+    }
+}
+
+function Get-ClaudeStatus {
+    param(
+        [int]$TimeoutSeconds = 15
+    )
+
+    $observedAt = [DateTimeOffset]::Now
+
+    if ($env:FAKE_CLAUDE_STATUS_RESPONSE) {
+        return Parse-ClaudeUsageResponse -RawJson $env:FAKE_CLAUDE_STATUS_RESPONSE -ObservedAt $observedAt
+    }
+
+    try {
+        $credentialsPath = if ($env:CLAUDE_CONFIG_DIR) {
+            Join-Path ([Environment]::ExpandEnvironmentVariables($env:CLAUDE_CONFIG_DIR)) '.credentials.json'
+        } elseif ($env:USERPROFILE) {
+            Join-Path $env:USERPROFILE '.claude\.credentials.json'
+        } else {
+            $null
+        }
+
+        if (-not $credentialsPath -or -not (Test-Path -LiteralPath $credentialsPath -PathType Leaf)) {
+            return [ordered]@{
+                agent = 'claude'
+                availability = 'unavailable'
+                observedAt = $observedAt.ToString('o')
+                message = 'Claude Code credentials not found. Run claude auth login first.'
+                windows = @()
+            }
+        }
+
+        $rawCreds = [IO.File]::ReadAllText($credentialsPath, [Text.Encoding]::UTF8)
+        $credsJson = $rawCreds | ConvertFrom-Json
+        $accessToken = $credsJson.claudeAiOauth.accessToken
+        if ([string]::IsNullOrWhiteSpace($accessToken)) {
+            return [ordered]@{
+                agent = 'claude'
+                availability = 'unavailable'
+                observedAt = $observedAt.ToString('o')
+                message = 'Claude Code is not logged in with an OAuth account. Run claude auth login first.'
+                windows = @()
+            }
+        }
+
+        $headers = @{
+            Authorization = "Bearer $accessToken"
+            'anthropic-beta' = 'oauth-2025-04-20'
+            'anthropic-version' = '2023-06-01'
+            Accept = 'application/json'
+            'User-Agent' = 'agent-delegation-tools/1.0.0'
+        }
+
+        try {
+            $response = Invoke-RestMethod -Uri 'https://api.anthropic.com/api/oauth/usage' `
+                -Headers $headers `
+                -Method Get `
+                -TimeoutSec $TimeoutSeconds
+            $rawJson = $response | ConvertTo-Json -Depth 10
+            return Parse-ClaudeUsageResponse -RawJson $rawJson -ObservedAt $observedAt
+        }
+        catch [System.Net.WebException] {
+            if ($_.Exception.Response) {
+                try {
+                    $stream = $_.Exception.Response.GetResponseStream()
+                    $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::UTF8)
+                    $errBody = $reader.ReadToEnd()
+                    if ($errBody -match '^{\s*"') {
+                        return Parse-ClaudeUsageResponse -RawJson $errBody -ObservedAt $observedAt
+                    }
+                } catch { }
+            }
+            $httpStatus = if ($_.Exception.Response -and $_.Exception.Response.StatusCode) { " (HTTP $([int]$_.Exception.Response.StatusCode))" } else { '' }
+            return [ordered]@{
+                agent = 'claude'
+                availability = 'unavailable'
+                observedAt = $observedAt.ToString('o')
+                message = "Claude usage query failed$($httpStatus): $($_.Exception.Message)"
+                windows = @()
+            }
+        }
+    }
+    catch {
+        return [ordered]@{
+            agent = 'claude'
+            availability = 'unavailable'
+            observedAt = $observedAt.ToString('o')
+            message = $_.Exception.Message
+            windows = @()
+        }
+    }
+}
+
+function Parse-AgyUsageResponse {
+    param(
+        [Parameter(Mandatory = $true)][string]$RawJson,
+        [Parameter(Mandatory = $true)][DateTimeOffset]$ObservedAt
+    )
+
+    $json = $RawJson | ConvertFrom-Json
+    if ($null -ne $json.error) {
+        $msg = if ($json.error.message) { $json.error.message } else { [string]$json.error }
+        return [ordered]@{
+            agent = 'agy'
+            availability = 'unavailable'
+            observedAt = $ObservedAt.ToString('o')
+            message = "Antigravity usage query failed: $msg"
+            windows = @()
+        }
+    }
+
+    $configs = $json.clientModelConfigs
+    if ($null -eq $configs -or @($configs).Count -eq 0) {
+        return [ordered]@{
+            agent = 'agy'
+            availability = 'unavailable'
+            observedAt = $ObservedAt.ToString('o')
+            message = 'Antigravity returned no clientModelConfigs.'
+            windows = @()
+        }
+    }
+
+    $windows = New-Object 'Collections.Generic.List[object]'
+    $seenPools = New-Object System.Collections.Generic.HashSet[string]
+
+    foreach ($config in @($configs)) {
+        if ($null -eq $config.quotaInfo) { continue }
+        $label = if ($config.label) { [string]$config.label } else { '' }
+
+        $poolName = if ($label -match '(?i)Gemini') {
+            'agy (Gemini)'
+        } elseif ($label -match '(?i)(Claude|GPT)') {
+            'agy (Claude / GPT)'
+        } else {
+            "agy ($label)"
+        }
+
+        if ($seenPools.Contains($poolName)) { continue }
+        $seenPools.Add($poolName) | Out-Null
+
+        $remFraction = 1.0
+        if ($null -ne $config.quotaInfo.remainingFraction) {
+            $remFraction = [Math]::Max(0.0, [Math]::Min(1.0, [double]$config.quotaInfo.remainingFraction))
+        }
+        $remainingPercent = [int][Math]::Round($remFraction * 100.0)
+        $usedPercent = 100 - $remainingPercent
+
+        $resetIso = if ($config.quotaInfo.resetTime) { [string]$config.quotaInfo.resetTime } else { $null }
+        $resetUnix = if ($resetIso) {
+            try { [DateTimeOffset]::Parse($resetIso).ToUnixTimeSeconds() } catch { $null }
+        } else { $null }
+
+        $windows.Add([ordered]@{
+            name = $poolName
+            usedPercent = $usedPercent
+            remainingPercent = $remainingPercent
+            windowDurationMins = $null
+            resetsAt = $resetIso
+            resetsAtUnix = $resetUnix
+        })
+    }
+
+    if ($windows.Count -eq 0) {
+        return [ordered]@{
+            agent = 'agy'
+            availability = 'unavailable'
+            observedAt = $ObservedAt.ToString('o')
+            message = 'Antigravity responded but returned no quotaInfo in clientModelConfigs.'
+            windows = @()
+        }
+    }
+
+    return [ordered]@{
+        agent = 'agy'
+        availability = 'available'
+        observedAt = $ObservedAt.ToString('o')
+        message = 'Read from Antigravity LanguageServerService GetCascadeModelConfigData RPC.'
+        windows = [object[]]($windows | ForEach-Object { $_ })
+    }
+}
+
+function Get-AgyStatus {
+    param(
+        [int]$TimeoutSeconds = 15
+    )
+
+    $observedAt = [DateTimeOffset]::Now
+
+    if ($env:FAKE_AGY_STATUS_RESPONSE) {
+        return Parse-AgyUsageResponse -RawJson $env:FAKE_AGY_STATUS_RESPONSE -ObservedAt $observedAt
+    }
+
+    try {
+        $lsProcesses = Get-Process -Name 'language_server' -ErrorAction SilentlyContinue
+        if (-not $lsProcesses -or $lsProcesses.Count -eq 0) {
+            return [ordered]@{
+                agent = 'agy'
+                availability = 'unavailable'
+                observedAt = $observedAt.ToString('o')
+                message = 'Antigravity is not running. Launch Antigravity to read real-time quota.'
+                windows = @()
+            }
+        }
+
+        $csrfToken = $null
+        $targetPid = $null
+
+        foreach ($proc in $lsProcesses) {
+            $cmdLine = $null
+            try {
+                $cim = Get-CimInstance Win32_Process -Filter "ProcessId = $($proc.Id)" -ErrorAction SilentlyContinue
+                if ($cim -and $cim.CommandLine) { $cmdLine = $cim.CommandLine }
+            } catch { }
+            if (-not $cmdLine) {
+                try {
+                    $wmi = Get-WmiObject Win32_Process -Filter "ProcessId = $($proc.Id)" -ErrorAction SilentlyContinue
+                    if ($wmi -and $wmi.CommandLine) { $cmdLine = $wmi.CommandLine }
+                } catch { }
+            }
+            if (-not $cmdLine) {
+                try {
+                    if ($proc.CommandLine) { $cmdLine = $proc.CommandLine }
+                } catch { }
+            }
+            if ($cmdLine -and $cmdLine -match '--csrf_token\s+([^\s]+)') {
+                $csrfToken = $Matches[1]
+                $targetPid = $proc.Id
+                break
+            }
+        }
+
+        if (-not $csrfToken) {
+            return [ordered]@{
+                agent = 'agy'
+                availability = 'unavailable'
+                observedAt = $observedAt.ToString('o')
+                message = 'Unable to retrieve Antigravity CSRF token from language_server.'
+                windows = @()
+            }
+        }
+
+        $candidatePorts = New-Object System.Collections.Generic.List[int]
+
+        $logCandidates = @(
+            (Join-Path $env:APPDATA 'Antigravity\logs\language_server.log'),
+            (Join-Path $env:APPDATA 'Antigravity IDE\logs\language_server.log')
+        )
+        foreach ($logPath in $logCandidates) {
+            if (Test-Path -LiteralPath $logPath -PathType Leaf) {
+                try {
+                    $lines = Get-Content -LiteralPath $logPath -TotalCount 200 -ErrorAction SilentlyContinue
+                    foreach ($line in $lines) {
+                        if ($line -match 'listening on \w+ port at (\d+) for HTTPS') {
+                            $p = [int]$Matches[1]
+                            if (-not $candidatePorts.Contains($p)) { $candidatePorts.Add($p) }
+                        }
+                    }
+                } catch { }
+            }
+        }
+
+        if ($targetPid) {
+            try {
+                $netConns = Get-NetTCPConnection -OwningProcess $targetPid -State Listen -ErrorAction SilentlyContinue
+                foreach ($conn in $netConns) {
+                    $p = [int]$conn.LocalPort
+                    if (-not $candidatePorts.Contains($p)) { $candidatePorts.Add($p) }
+                }
+            } catch { }
+        }
+
+        if ($candidatePorts.Count -eq 0) {
+            return [ordered]@{
+                agent = 'agy'
+                availability = 'unavailable'
+                observedAt = $observedAt.ToString('o')
+                message = 'Unable to detect Antigravity Language Server listening port.'
+                windows = @()
+            }
+        }
+
+        $prevCallback = [System.Net.ServicePointManager]::ServerCertificateValidationCallback
+        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+
+        $responseObj = $null
+        try {
+            $headers = @{ 'x-codeium-csrf-token' = $csrfToken }
+            $callTimeout = [Math]::Min($TimeoutSeconds, 5)
+            foreach ($port in $candidatePorts) {
+                try {
+                    $url = "https://127.0.0.1:$port/exa.language_server_pb.LanguageServerService/GetCascadeModelConfigData"
+                    $responseObj = Invoke-RestMethod -Uri $url `
+                        -Method Post `
+                        -Body '{}' `
+                        -ContentType 'application/json' `
+                        -Headers $headers `
+                        -TimeoutSec $callTimeout
+                    if ($responseObj) { break }
+                } catch { }
+            }
+        }
+        finally {
+            [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $prevCallback
+        }
+
+        if (-not $responseObj) {
+            return [ordered]@{
+                agent = 'agy'
+                availability = 'unavailable'
+                observedAt = $observedAt.ToString('o')
+                message = 'Failed to connect to Antigravity Language Server RPC endpoint.'
+                windows = @()
+            }
+        }
+
+        $rawJson = $responseObj | ConvertTo-Json -Depth 10
+        return Parse-AgyUsageResponse -RawJson $rawJson -ObservedAt $observedAt
+    }
+    catch {
+        return [ordered]@{
+            agent = 'agy'
+            availability = 'unavailable'
+            observedAt = $observedAt.ToString('o')
+            message = $_.Exception.Message
+            windows = @()
+        }
+    }
+}
+
 if (-not $WorkDir) { $WorkDir = (Get-Location).ProviderPath }
 $resolvedWorkDir = Resolve-ExistingDirectory $WorkDir
 $resolvedOutFile = if ($OutFile) { Resolve-OutputPath $OutFile } else { $null }
@@ -269,8 +664,12 @@ if ($Agent -in @('all', 'codex')) {
         })
     }
 }
-if ($Agent -in @('all', 'agy')) { $statuses.Add((New-UnsupportedStatus 'agy')) }
-if ($Agent -in @('all', 'claude')) { $statuses.Add((New-UnsupportedStatus 'claude')) }
+if ($Agent -in @('all', 'agy')) {
+    $statuses.Add((Get-AgyStatus -TimeoutSeconds $TimeoutSec))
+}
+if ($Agent -in @('all', 'claude')) {
+    $statuses.Add((Get-ClaudeStatus -TimeoutSeconds $TimeoutSec))
+}
 
 $payload = if ($Agent -eq 'all') { [object[]]($statuses | ForEach-Object { $_ }) } else { $statuses[0] }
 if ($Json) {
