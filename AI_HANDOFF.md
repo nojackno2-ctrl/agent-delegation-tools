@@ -1,5 +1,15 @@
 # AI handoff
 
+## 2026-08-21 GitHub synchronization
+
+- **Objective**: Synchronized latest validated commits to GitHub remote repository.
+- **Actions & Verification**:
+  - Ran `validate.ps1`: 51 passes, 0 failures, 1 skip.
+  - Ran full test suite (`tests/*.Tests.ps1`): 7/7 test suites passed (agy, claude, codex, delegate, install, parallel, status).
+  - Pushed commit `7420285` (`feat: add live quota status queries and CLI sign-in detection`) to `origin/master`.
+  - Updated remote tracking URL to `https://github.com/nojackno2-ctrl/agent-delegation-tools-skill.git`.
+  - Verified `master` branch is clean and up to date with `origin/master`.
+
 ## 2026-08-21 Skill documentation sync with shipped status and sign-in behavior
 
 - **Objective**: Bring the skill instructions in line with the code that already shipped in the working tree, so a host reading SKILL.md sees the real `status.ps1` contract and the exit-`78` sign-in path.
