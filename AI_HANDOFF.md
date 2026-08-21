@@ -1,6 +1,26 @@
 # AI handoff
 
-## 2026-08-21 GitHub synchronization
+## 2026-08-21 Passive Autonomous Subagent Delegation & Quota-Aware Load Balancing
+
+- **Objective**: Transformed `agent-delegation-tools` into an ambient, passive skill that autonomously delegates tasks without requiring explicit user invocation prompts, performs live quota load balancing across CLI providers (preventing repeated dispatch to exhausted backends), and proactively grants workspace write permissions for implementation and code modification tasks.
+- **Key Enhancements**:
+  - `skills/agent-delegation-tools/scripts/delegate.ps1` & root `delegate.ps1`:
+    - Added `-BalanceQuota` switch and `Get-DynamicQuotaHealth` helper to query real-time remaining quota across providers (`status.ps1`).
+    - Implemented dynamic quota rebalancing: if the default target backend has low quota (<= 10%), is exhausted (0%), or is unavailable (HTTP 429), `delegate.ps1` dynamically rebalances the primary agent to the healthiest available provider and populates healthy fallback candidates.
+    - Automatically enables `-AgySkipPermissions` when rebalancing to AGY in `workspace-write` mode to ensure headless runs do not block.
+  - `skills/agent-delegation-tools/SKILL.md`, `.agents/skills/...`, `.claude/skills/...`:
+    - Refactored YAML frontmatter description and instruction body to eliminate discouraging constraints ("Do not use for ordinary work...").
+    - Added **Core Behavioral Principles**: Ambient/Passive Subagent Delegation, Live Quota-Aware Load Balancing, Proactive Workspace Write Permissions, and Parent Orchestration.
+    - Updated backend selection table and examples: coding/implementation tasks default to `workspace-write` (with `-SkipPermissions` for AGY, `workspace-write` for Codex/Claude/delegate).
+  - `skills/agent-delegation-tools/agents/openai.yaml` & `README.md`:
+    - Updated skill metadata and documentation examples featuring `-BalanceQuota` and `workspace-write` permissions.
+  - `tests/delegate-wrapper.Tests.ps1`:
+    - Added unit test cases validating depleted primary rebalancing to healthy alternative and healthy direct routing under `-BalanceQuota`.
+- **Verification Performed**:
+  - `validate.ps1`: 51 passes, 0 failures, 1 skip. 100% SHA-256 parity across canonical, project, and global host copies.
+  - `tests/*.Tests.ps1`: 7/7 test suites passed (agy, claude, codex, delegate, install, parallel, status).
+  - Live CLI Test on host: `.\delegate.ps1 -TaskType implementation -Sandbox workspace-write -BalanceQuota "Reply with exactly: DELEGATE_BALANCE_TEST_OK"` detected Codex at 0%, dynamically rebalanced primary to AGY with `workspace-write`, and completed cleanly with exit code 0 (`DELEGATE_BALANCE_TEST_OK`).
+
 
 - **Objective**: Synchronized latest validated commits to GitHub remote repository.
 - **Actions & Verification**:

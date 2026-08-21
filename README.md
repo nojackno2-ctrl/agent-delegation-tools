@@ -94,10 +94,13 @@
 ### 1. 統一智慧調度器 (`delegate.ps1`)
 
 ```powershell
-# 自動依任務類型選擇最佳子代理（analysis 自動導向 AGY Gemini 3.7 Flash；implementation 導向 Codex）
+# 自動依任務類型選擇最佳子代理，並搭配 -BalanceQuota 依據各 CLI 即時額度智慧負載平衡
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\delegate.ps1 -TaskType implementation -Sandbox workspace-write -BalanceQuota "實作 src/auth.ts 的認證中介軟體"
+
+# 自動分析任務（analysis 自動導向 AGY Gemini 3.7 Flash）
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\delegate.ps1 -TaskType analysis "分析 src/core/auth.ts 的模組依賴關係"
 
-# 指定子代理後端與沙箱模式
+# 指定子代理後端與沙箱模式（賦予檔案修改權限）
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\delegate.ps1 -Agent codex -Sandbox workspace-write "實作 src/lexer.js 的錯誤恢復機制"
 
 # 指定審查任務（自動導向 Claude Code，並保存結果至檔案）
