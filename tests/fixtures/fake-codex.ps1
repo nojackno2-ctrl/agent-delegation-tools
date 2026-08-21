@@ -12,6 +12,10 @@ if ($Arguments.Count -ge 2 -and [string]$Arguments[0] -eq 'login' -and [string]$
     [Console]::Out.Write('Logged in')
     exit 0
 }
+if ($env:FAKE_CODEX_LOGGED_IN -eq 'false') {
+    [Console]::Error.Write("Authentication required: Please run 'codex login' to sign in.")
+    exit 1
+}
 [IO.File]::WriteAllLines($env:FAKE_CODEX_ARGS_FILE, [string[]]$Arguments, [Text.UTF8Encoding]::new($false))
 if ($env:FAKE_CODEX_SLEEP_MS) {
     Start-Sleep -Milliseconds ([int]$env:FAKE_CODEX_SLEEP_MS)

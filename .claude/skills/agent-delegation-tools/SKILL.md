@@ -1,6 +1,6 @@
 ---
 name: agent-delegation-tools
-description: Inspect supported CLI usage limits and delegate bounded tasks to isolated Antigravity CLI, Codex CLI, or Claude CLI children on Windows, with parent-selected child model and reasoning effort, hard timeouts, concurrent batches, synchronization summaries, and optional sequential fallback when a CLI quota is exhausted. Use when the user asks for external CLI workers, parallel subagents, handoff, delegation, remaining Codex usage or reset time, cross-CLI quota fallback, or safe non-ASCII Codex CLI paths. Do not use for ordinary work the current agent can complete directly.
+description: Inspect live CLI subscription usage limits and delegate bounded tasks to isolated Antigravity CLI, Codex CLI, or Claude CLI children on Windows, with parent-selected child model and reasoning effort, hard timeouts, concurrent batches, synchronization summaries, and optional sequential fallback when a CLI quota is exhausted. Use when the user asks for external CLI workers, parallel subagents, handoff, delegation, remaining Codex, Claude, or Antigravity subscription usage and reset time, cross-CLI quota fallback, a signed-out delegation CLI, or safe non-ASCII Codex CLI paths. Do not use for ordinary work the current agent can complete directly.
 ---
 
 # Agent Delegation Tools
@@ -52,7 +52,15 @@ Use `status.ps1` when provider choice depends on remaining usage or reset time:
     -Agent all -Json -OutFile "$env:TEMP\delegation-status.json"
 ```
 
-Codex status comes from the read-only app-server `account/rateLimits/read` method and does not start a model turn. Treat AGY and Claude as `unsupported` unless their current CLIs add an authoritative machine-readable usage interface. Never estimate remaining quota from schedules, elapsed time, UI labels, or past failures. An unavailable query is not proof of exhaustion.
+`-Agent` selects `all` (default), `codex`, `agy`, or `claude`. `-TimeoutSec` bounds each query (default 15), `-WorkDir` sets the directory used for the Codex query, and `-CodexPath` overrides Codex executable discovery. Without `-Json` the script prints one readable line per usage window. No query starts a model turn.
+
+- **Codex**: Read from Codex app-server stdio JSON-RPC `account/rateLimits/read` without starting a model turn.
+- **Claude Code**: Read from Anthropic OAuth endpoint `https://api.anthropic.com/api/oauth/usage` using credentials in `~/.claude/.credentials.json` (or `$env:CLAUDE_CONFIG_DIR/.credentials.json`), extracting 5-hour and 7-day usage windows with reset timestamps.
+- **Antigravity (AGY)**: Read from local Language Server `GetCascadeModelConfigData` RPC endpoint with extracted CSRF token and listening port, extracting model quota fractions and grouping into `agy (Gemini)` and `agy (Claude / GPT)` pools with reset timestamps.
+
+Each record carries `agent`, `availability` (`available` or `unavailable`), a `message` when unavailable, and a `windows` list whose entries carry `name`, `usedPercent`, `remainingPercent`, `resetsAt` (ISO 8601), and `resetsAtUnix`.
+
+Never estimate remaining quota from schedules, elapsed time, UI labels, or past failures. An `unavailable` result means the stored credentials, the running language server, or the local app-server could not be reached; it is not proof of exhaustion.
 
 ## Choose child settings and backend
 
@@ -86,7 +94,7 @@ Use `gemini-3.7-flash` (with `-Effort low|medium|high`, `gemini-3.7-flash-high`,
     'Inspect the parser failure. Report the cause with file evidence. Do not edit files.'
 ```
 
-Use `-AddDir` for extra workspaces. The wrapper gives non-ASCII paths collision-safe ASCII junctions. `-ApproveForMe` is optional and requires `workspace-write`; if the installed CLI rejects that version-sensitive combination, rerun without it and report the compatibility failure.
+Use `-AddDir` for extra workspaces. The wrapper gives non-ASCII paths collision-safe ASCII junctions. It resolves the executable from `-CodexPath` or `CODEX_CLI_PATH`, then `.sandbox-bin\codex.exe` under `CODEX_HOME` or `~/.codex`, then the Desktop-managed install, and only then PATH. `-ApproveForMe` is optional and requires `workspace-write`; if the installed CLI rejects that version-sensitive combination, rerun without it and report the compatibility failure.
 
 ### Claude CLI worker
 
@@ -159,6 +167,12 @@ Run the batch into a new or empty results directory:
 `parallel.ps1` launches at most `MaxConcurrency` independent dispatcher processes, waits until every task finishes or times out, and writes one `summary.json` plus isolated `final.txt`, `raw.txt`, `stdout.txt`, `stderr.txt`, and `result.json` files per task. It rejects duplicate task names, `danger-full-access`, missing write scopes, overlapping write scopes, non-empty result directories, and recursive delegation. A task-level timeout terminates only that task's process tree. Aggregate exit is `0` when all tasks succeed, `124` when any task times out, and `1` for other mixed failures; each task's original exit code remains in the summary.
 
 Workers do not message each other directly. The shared synchronization point is the completed summary and current worktree. For dependencies, run multiple explicit waves: parallel discovery, parent synthesis, then a later implementation or review batch. Never schedule tasks that must read another task's in-flight edits in the same wave.
+
+## Handle a signed-out CLI
+
+`agy.ps1`, `codex.ps1`, and `claude.ps1` recognize a not-signed-in CLI in the child output, exit `78`, and append the sign-in command for that provider: `agy`, `codex login`, or `claude auth login`.
+
+Exit `78` is a configuration failure, not quota exhaustion. The dispatcher does not fall back to another provider for it, and no delegated work was performed. Report it, ask the user to complete that CLI's interactive sign-in, then retry the same task. Do not substitute API-key credentials for a subscription sign-in unless the user asks for that.
 
 ## Review
 

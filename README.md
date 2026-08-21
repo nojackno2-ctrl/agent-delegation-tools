@@ -143,12 +143,32 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\claude.ps1 -Mode accep
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\claude.ps1 -Resume <session-id> "針對剛才提出的第 2 點建議進行實作"
 ```
 
+### 5. 即時額度與訂閱用量查詢 (`status.ps1`)
+
+```powershell
+# 查詢所有 CLI 後端即時額度與重置時間（不啟動任何模型回合，零 Token 消耗）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\status.ps1 -Agent all
+
+# 輸出結構化 JSON 至檔案，供主代理決策時使用
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\status.ps1 -Agent all -Json -OutFile "$env:TEMP\quota-status.json"
+
+# 僅查詢特定 CLI（例如 codex / agy / claude）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\status.ps1 -Agent claude
+```
+
+- **Codex**: 透過 app-server stdio JSON-RPC `account/rateLimits/read` 取得 primary / secondary 視窗。
+- **Claude Code**: 透過 Anthropic OAuth endpoint `https://api.anthropic.com/api/oauth/usage` 取得 5 小時 / 7 天使用量與重置時間。
+- **Antigravity (AGY)**: 透過本地 Language Server `GetCascadeModelConfigData` RPC 取得 Gemini 與 Claude/GPT 資源池額度。
+
 ---
 
 ## 參數速查表
 
 | 腳本 | 核心參數 | 說明 |
 |---|---|---|
+| `status.ps1` | `-Agent <all\|codex\|agy\|claude>` | 查詢目標（預設 `all`） |
+| | `-Json` | 輸出結構化 JSON |
+| | `-OutFile <path>` / `-WorkDir <path>` / `-TimeoutSec <int>` | 輸出檔案路徑 / 工作目錄 / 查詢逾時秒數 |
 | `delegate.ps1` | `-Prompt <string>` | 任務提示詞（必填） |
 | | `-Agent <auto\|agy\|codex\|claude>` | 指定主要後端（預設 `auto`） |
 | | `-FallbackAgent <list>` | 額度耗盡時的接手順序，需明確指定；未指定則只跑主要後端 |

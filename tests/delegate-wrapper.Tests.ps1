@@ -110,7 +110,7 @@ try {
     Assert-Equal $prompt ([IO.File]::ReadAllText($claudePromptFile, [Text.Encoding]::UTF8)) 'Dispatcher changed the Claude stdin prompt.'
 
     Clear-BackendEvidence $evidenceFiles
-    $implementation = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType implementation -CodexModel codex-child-model -CodexEffort xhigh -CodexPath $env:TEST_CODEX -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
+    $implementation = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType implementation -Sandbox workspace-write -CodexModel codex-child-model -CodexEffort xhigh -CodexPath $env:TEST_CODEX -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
     Assert-Equal 0 $implementation.ExitCode ('Implementation dispatch failed: ' + ($implementation.Output -join [Environment]::NewLine))
     Assert-True (Test-Path -LiteralPath $codexArgsFile -PathType Leaf) 'Implementation should route to Codex.'
     Assert-True (-not (Test-Path -LiteralPath $agyArgsFile)) 'Implementation dispatch must not also launch AGY.'
@@ -122,7 +122,7 @@ try {
     Assert-Equal $prompt $codexArguments[-1] 'Dispatcher changed the Codex prompt.'
 
     Clear-BackendEvidence $evidenceFiles
-    $userConfigured = Invoke-EncodedChild '& $env:TEST_WRAPPER -Agent auto -TaskType implementation -Model user-selected-model -Effort ultra -CodexPath $env:TEST_CODEX -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
+    $userConfigured = Invoke-EncodedChild '& $env:TEST_WRAPPER -Agent auto -TaskType implementation -Sandbox workspace-write -Model user-selected-model -Effort ultra -CodexPath $env:TEST_CODEX -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
     Assert-Equal 0 $userConfigured.ExitCode ('User-configured automatic dispatch failed: ' + ($userConfigured.Output -join [Environment]::NewLine))
     Assert-True (Test-Path -LiteralPath $codexArgsFile -PathType Leaf) 'Automatic implementation routing should select Codex for user-configured child settings.'
     $userConfiguredArguments = [IO.File]::ReadAllLines($codexArgsFile, [Text.Encoding]::UTF8)
@@ -130,7 +130,7 @@ try {
     Assert-True ($userConfiguredArguments -contains 'model_reasoning_effort="ultra"') 'The explicit primary-child effort was not preserved during automatic routing.'
 
     Clear-BackendEvidence $evidenceFiles
-    $scaffolding = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType scaffolding -AgySkipPermissions -AgyPath $env:TEST_AGY -WorkDir $env:TEST_WORKDIR -Prompt $env:TEST_PROMPT'
+    $scaffolding = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType scaffolding -Sandbox workspace-write -AgySkipPermissions -AgyPath $env:TEST_AGY -WorkDir $env:TEST_WORKDIR -Prompt $env:TEST_PROMPT'
     Assert-Equal 0 $scaffolding.ExitCode ('Scaffolding dispatch failed: ' + ($scaffolding.Output -join [Environment]::NewLine))
     $scaffoldingArguments = Read-RecordedArguments $agyArgsFile
     Assert-Equal 'accept-edits' $scaffoldingArguments[[Array]::IndexOf($scaffoldingArguments, '--mode') + 1] 'Explicit scaffolding write mode was not forwarded to AGY.'
@@ -157,7 +157,7 @@ try {
 
     Clear-BackendEvidence $evidenceFiles
     $env:FAKE_CODEX_LOGGED_IN = 'false'
-    $loggedOut = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType implementation -FallbackAgent claude -CodexPath $env:TEST_CODEX -ClaudePath $env:TEST_CLAUDE -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
+    $loggedOut = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType implementation -Sandbox workspace-write -FallbackAgent claude -CodexPath $env:TEST_CODEX -ClaudePath $env:TEST_CLAUDE -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
     Assert-Equal 78 $loggedOut.ExitCode 'Dispatcher must preserve the login-required exit code.'
     Assert-True (($loggedOut.Output -join [Environment]::NewLine).Contains('codex login')) 'Dispatcher must surface the Codex login instruction.'
     Assert-True (-not (Test-Path -LiteralPath $codexArgsFile)) 'A logged-out Codex child task must not launch.'
