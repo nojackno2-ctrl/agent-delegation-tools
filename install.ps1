@@ -54,6 +54,8 @@ param(
 
     [switch]$Prune,
 
+    [switch]$Mcp,
+
     [switch]$DryRun
 )
 
@@ -202,6 +204,20 @@ foreach ($hostName in $selected) {
 if ($failed -gt 0) {
     Write-Host "$failed file(s) failed SHA-256 verification." -ForegroundColor Red
     exit 1
+}
+
+if ($Mcp) {
+    Write-Host 'Building and registering Model Context Protocol (MCP) Server...' -ForegroundColor Cyan
+    $mcpDir = Join-Path $PSScriptRoot 'mcp-server'
+    if (Test-Path -LiteralPath (Join-Path $mcpDir 'package.json') -PathType Leaf) {
+        if (-not $IsDryRun) {
+            & npm.cmd run install:mcp --prefix $mcpDir
+        }
+        else {
+            Write-Host '           dry run: npm run install:mcp would be executed' -ForegroundColor DarkYellow
+        }
+    }
+    Write-Host ''
 }
 
 if ($IsDryRun) {

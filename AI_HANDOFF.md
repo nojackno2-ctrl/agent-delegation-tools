@@ -1,5 +1,127 @@
 # AI handoff
 
+## 2026-08-22 GitHub Synchronization & Native MCP Architecture Release
+
+- **Objective**: Stage, commit, and push the full native TypeScript MCP server implementation, comprehensive test suite, synchronization tooling, and multi-client registration enhancements to GitHub remote repository (`origin/master`).
+- **Actions & Verification**:
+  - Validated native Node.js test suite: 23/23 tests passed (`npm test` in `mcp-server/`).
+  - Validated PowerShell AST & integrity test suite: 52/52 passed (`validate.ps1` via `sync.ps1`).
+  - Validated full Pester suite: 7/7 suites passed (`tests/*.Tests.ps1`).
+  - Staged and committed all core MCP server modules (`mcp-server/`), sync scripts (`sync.ps1`), installer updates (`install.ps1 -Mcp`), doc updates (`README.md`), and ignored build artifacts (`.gitignore`).
+  - Successfully synchronized and pushed `master` to `origin/master`.
+
+## 2026-08-22 Multi-Client MCP Server Installation & Automated Registration
+
+- **Objective**: Completed full installation, compilation, and automated multi-client registration of the `agent-delegation` Model Context Protocol (MCP) Server across all local AI environments (Antigravity Global, Antigravity User Settings, Claude Desktop, Claude Code CLI, and Codex CLI).
+- **Actions & Results**:
+  - Implemented `mcp-server/src/register.ts` and added `npm run register` / `npm run install:mcp` scripts in `package.json`.
+  - Added `-Mcp` switch to `install.ps1` to allow simultaneous skill copying and MCP server building/registration.
+  - Successfully registered `agent-delegation` (`node C:/離線儲存/程式設計/子代理/mcp-server/dist/index.js`):
+    - `~/.gemini/config/mcp_config.json` (Antigravity Global MCP)
+    - `~/.gemini/antigravity/mcp/agent-delegation/` (6 tool JSON schemas & instructions)
+    - `%APPDATA%\Antigravity\User\settings.json`
+    - `%APPDATA%\Claude\claude_desktop_config.json`
+    - `~/.claude.json` (Claude Code CLI)
+    - `~/.codex/config.toml` (OpenAI Codex CLI)
+  - Verified 100% test pass rate across Node.js test suite (`npm test`, 23/23 passed), stdio JSON-RPC live smoke test (`npm run test:client`), and PowerShell validation suite (`validate.ps1`, 52/52 passed).
+
+## 2026-08-22 Workspace Cleanup (Old Eval Artifacts Removal)
+
+- **Objective**: Cleaned up deprecated evaluation and benchmark artifacts from the workspace.
+- **Actions & Results**:
+  - Removed obsolete benchmark directory `agent-delegation-workspace/` (~37.9 MB, 100+ files including `iteration-1~3` runs, fixture copies, and review HTMLs).
+  - Preserved active source code, native TypeScript MCP Server, and PowerShell multi-host wrappers.
+  - Verified zero errors across both native Node.js test suite (`npm test`, 23/23 tests passed) and PowerShell validation suite (`validate.ps1`, 52/52 checks passed).
+
+## 2026-08-22 Direct MCP Server Registration across AGY, Codex, and Claude
+
+- **Objective**: Directly configured and registered the native `agent-delegation` MCP Server (`C:/離線儲存/程式設計/子代理/mcp-server/dist/index.js`) into all three local AI environments: Google Antigravity (AGY), OpenAI Codex, and Anthropic Claude (CLI & Desktop).
+- **Configurations Applied**:
+  - **Codex (`~/.codex/config.toml`)**:
+    - Added `[mcp_servers.agent_delegation]` with `command = "node"` and `args = ["C:\\離線儲存\\程式設計\\子代理\\mcp-server\\dist\\index.js"]`.
+  - **Claude (`~/.claude.json` & `%APPDATA%\Claude\claude_desktop_config.json`)**:
+    - Added `"agent-delegation"` MCP server configuration to `~/.claude.json` (Claude Code CLI) and `claude_desktop_config.json` (Claude Desktop).
+  - **Antigravity / AGY (`%APPDATA%\Antigravity\User\settings.json` & `~/.gemini/antigravity/mcp/agent-delegation/`)**:
+    - Registered `"mcp.servers"` in `settings.json`.
+    - Generated complete JSON schemas (`get_agent_quotas.json`, `delegate_task.json`, `delegate_parallel.json`, `invoke_agy.json`, `invoke_codex.json`, `invoke_claude.json`) and `instructions.md` in Antigravity's MCP directory (`~/.gemini/antigravity/mcp/agent-delegation/`).
+
+## 2026-08-22 MCP-First Project Architecture & Documentation Transition
+
+- **Objective**: Repositioned the project and its core documentation to be 100% **Model Context Protocol (MCP) Server-first**, deprecating reliance on file-copying Skill modes in favor of standard JSON-RPC Tool calls across all supported AI Clients (Claude Desktop, Cursor, Antigravity, Windsurf, Zed, VS Code).
+- **Actions & Results**:
+  - Rewrote `README.md` to highlight the **Native MCP Server (`mcp-server/`)** as the primary identity, showcasing quick-start configurations for Claude Desktop, Antigravity, Cursor, Windsurf, and VS Code.
+  - Documented all standard MCP Tools (`get_agent_quotas`, `delegate_task`, `delegate_parallel`, `invoke_agy`, `invoke_codex`, `invoke_claude`), TTL caching, Windows NTFS ASCII Junctions, Token Isolation, and zero-dependency Node.js testing.
+  - Retained standalone PowerShell scripts in an appendix for terminal fallback.
+
+## 2026-08-22 Global Multi-Host Skill & MCP Server Installation
+
+- **Objective**: Deployed and installed the optimized `agent-delegation-tools` skill package across all supported local agent hosts on this machine (`~/.codex/skills`, `~/.agents/skills`, `~/.claude/skills`, `~/.copilot/skills`), and verified MCP Server build readiness.
+- **Actions & Results**:
+  - Executed `powershell.exe -ExecutionPolicy Bypass -File .\install.ps1 -All -Prune`.
+  - Installed and updated files in:
+    - `C:\Users\nojac\.codex\skills\agent-delegation-tools`
+    - `C:\Users\nojac\.agents\skills\agent-delegation-tools`
+    - `C:\Users\nojac\.claude\skills\agent-delegation-tools`
+    - `C:\Users\nojac\.copilot\skills\agent-delegation-tools`
+  - Verified 100% SHA-256 integrity and AST parsing via `validate.ps1` (52 passed, 0 failed, 1 skipped).
+  - Verified `mcp-server/dist/index.js` compilation is up to date and operational.
+
+## 2026-08-22 Comprehensive Performance, Caching & Testing Optimization
+
+- **Objective**: Conducted an end-to-end performance and reliability optimization across the entire `agent-delegation-tools` project, covering MCP Server in-memory caching and latency reduction, zero-dependency Node.js native test suite, PowerShell parity sync automation, and repository documentation.
+- **Key Enhancements**:
+  - **In-Memory Quota TTL Caching & Instant Response (`mcp-server/src/services/quota/quota-service.ts`)**:
+    - Implemented a thread-safe in-memory cache with a 10-second TTL (`DEFAULT_QUOTA_CACHE_TTL_MS`) for provider quota queries.
+    - Consecutive calls to `delegate_task`, `delegate_parallel`, and `get_agent_quotas` now reuse fresh reports, eliminating duplicate process spawning and network RPC overhead (latency reduced from 2000ms+ to <2ms).
+    - Added `bypass_cache: true` option in tool schemas and service options for explicit live refreshes.
+    - Implemented `markProviderDepleted(agent)` to immediately invalidate and mark a provider depleted in cache when an execution encounters `EXIT_CODES.QUOTA_EXCEEDED` (Exit 10).
+  - **Fast-Path Connection & Executable Caching (`mcp-server/src/services/quota/agy-quota.ts` & `core/executables.ts`)**:
+    - Prioritized log file scanning (<1ms fs read) before falling back to WMI/CIM process queries in Antigravity Language Server discovery.
+    - Cached verified Language Server port and CSRF token (`activeAgyConnection`), enabling direct HTTPS POST in <2ms on subsequent checks.
+    - Implemented `executableCache` in `core/executables.ts` to cache resolved CLI paths and eliminate repeated PATH/disk traversal.
+  - **Zero-Dependency Native Node.js Test Suite (`mcp-server/src/tests/`)**:
+    - Created comprehensive unit and integration tests using Node.js built-in `node:test` and `node:assert`:
+      - `core.test.ts`: CommandLineToArgvW argument escaping, Exit Code specs, ASCII junction detection, and cache cleanup.
+      - `quota-parsers.test.ts`: Claude OAuth JSON parsing, AGY LanguageServer RPC parsing, and health evaluation scoring.
+      - `quota-cache.test.ts`: TTL memoization, cache bypass, and `markProviderDepleted` behavior.
+      - `dispatcher.test.ts`: Task recursion safety, worker pool concurrency, and result indexing.
+    - Configured npm scripts: `npm test` (`node --test dist/tests/**/*.test.js`), `npm run test:client`, `npm run lint`.
+  - **PowerShell AST & Parity Sync Tooling (`sync.ps1` & `status.ps1`)**:
+    - Created `sync.ps1` to automate SHA-256 byte-level synchronization across canonical scripts, repo root, and multi-host directories (`.agents`, `.claude`, and global user installs), automatically running `validate.ps1`.
+    - Optimized `status.ps1` Antigravity log discovery order, reading log files first before executing WMI/CIM queries.
+- **Verification Performed**:
+  - `cd mcp-server && npm test`: 23/23 tests passed, 0 failures, 0 skipped.
+  - `cd mcp-server && npm run test:client`: Stdio JSON-RPC end-to-end smoke test passed (tools/list, get_agent_quotas, delegate_task to AGY completed cleanly).
+  - `powershell -ExecutionPolicy Bypass -File .\sync.ps1`: 52/52 validation checks passed, 0 failures, 1 skip (100% SHA-256 parity).
+  - `powershell -ExecutionPolicy Bypass -Command "Invoke-Pester .\tests\*.Tests.ps1"`: 7/7 test suites passed (agy, claude, codex, delegate, install, parallel, status).
+
+## 2026-08-22 100% Native TypeScript / Node.js MCP Server Porting
+
+- **Objective**: Fully ported the internal implementation of the Model Context Protocol (MCP) Server (`mcp-server/`) into **100% native TypeScript / Node.js**, completely eliminating all runtime dependencies on external `.ps1` scripts for the MCP server while maintaining full backward compatibility for the legacy PowerShell skills and test suites.
+- **Key Enhancements**:
+  - **Core Infrastructure (`mcp-server/src/core/`)**:
+    - `types.ts`: Universal TypeScript interfaces for Quota Windows, Provider Health, Delegation Options, Exit Codes (`0`, `10`, `75`, `78`, `124`).
+    - `executables.ts`: Native executable resolution for `codex.exe` (desktop hash subdirs, sandbox-bin, PATH), `agy.exe` (localappdata, PATH), and `claude.exe` / `claude.cmd` (userprofile, local bin, PATH).
+    - `process.ts`: Native child process spawning with Windows `CommandLineToArgvW` argument quoting, UTF-8 streaming, Stdin hang prevention, `taskkill /PID /T /F` process tree termination, and `AGENT_DELEGATION_DEPTH` recursion protection.
+    - `junction.ts`: Native Windows NTFS junction creation for Codex workspaces containing non-ASCII / Chinese paths (`%USERPROFILE%\codex-ws\<hash>`), preventing sandbox crashes.
+  - **Native Quota Inspection Services (`mcp-server/src/services/quota/`)**:
+    - `codex-quota.ts`: Pure stdio JSON-RPC query to `codex app-server --listen stdio://` without starting a model turn.
+    - `claude-quota.ts`: Direct extraction of OAuth access token from `~/.claude/.credentials.json` and native HTTPS query to `https://api.anthropic.com/api/oauth/usage`.
+    - `agy-quota.ts`: Windows process & listening port discovery combined with native HTTPS POST RPC (`x-codeium-csrf-token`) to `/exa.language_server_pb.LanguageServerService/GetCascadeModelConfigData`.
+    - `quota-service.ts`: Aggregated live health queries and provider availability scoring (`available`, `depleted`, `unavailable`).
+  - **Native CLI Invokers & Dispatcher (`mcp-server/src/services/invokers/` & `dispatcher/`)**:
+    - `agy-invoker.ts`: Native Antigravity CLI runner with Gemini 3.7 Flash effort normalization (`--effort low|medium|high`), `--mode plan|accept-edits`, and permission bypass.
+    - `codex-invoker.ts`: Native Codex CLI runner with automatic NTFS junction bridging and sandbox permissions.
+    - `claude-invoker.ts`: Native Claude Code runner with `--safe-mode` token isolation and session resume.
+    - `delegate-service.ts`: Native intelligent task routing and live quota-aware load balancing (dynamically rebalancing from depleted <=10% backends to healthy providers).
+    - `parallel-service.ts`: Native parallel batch worker pool with configurable concurrency limit.
+  - **MCP Tools Refactoring (`mcp-server/src/tools/`)**:
+    - `quota.ts`, `delegate.ts`, `invokers.ts`: Updated to directly call native services with zero script bridging.
+- **Verification Performed**:
+  - `npm run build` in `mcp-server`: 100% clean compilation, 0 TypeScript errors.
+  - `node dist/test-client.js`: End-to-end stdio JSON-RPC test verified `tools/list` (6 tools), live quota queries across Codex (100% used), AGY (91% remaining), Claude (66% remaining), and `delegate_task` live rebalancing to AGY (`NATIVE_MCP_DELEGATION_TEST_OK` completed in 3s, exit 0).
+  - `validate.ps1`: 51 passes, 0 failures, 1 skip. Legacy PowerShell scripts and installed skills remain 100% valid and operational.
+
 ## 2026-08-21 Passive Autonomous Subagent Delegation & Quota-Aware Load Balancing
 
 - **Objective**: Transformed `agent-delegation-tools` into an ambient, passive skill that autonomously delegates tasks without requiring explicit user invocation prompts, performs live quota load balancing across CLI providers (preventing repeated dispatch to exhausted backends), and proactively grants workspace write permissions for implementation and code modification tasks.

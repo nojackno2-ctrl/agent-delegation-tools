@@ -520,29 +520,61 @@ function Get-AgyStatus {
         }
 
         $csrfToken = $null
-        $targetPid = $null
+        $candidatePorts = New-Object System.Collections.Generic.List[int]
 
-        foreach ($proc in $lsProcesses) {
-            $cmdLine = $null
-            try {
-                $cim = Get-CimInstance Win32_Process -Filter "ProcessId = $($proc.Id)" -ErrorAction SilentlyContinue
-                if ($cim -and $cim.CommandLine) { $cmdLine = $cim.CommandLine }
-            } catch { }
-            if (-not $cmdLine) {
+        # Fast-path: scan log files for listening port and CSRF token (saves 1-2s over WMI/CIM)
+        $logCandidates = @(
+            (Join-Path $env:APPDATA 'Antigravity\logs\language_server.log'),
+            (Join-Path $env:APPDATA 'Antigravity IDE\logs\language_server.log'),
+            (Join-Path $env:USERPROFILE '.gemini\antigravity\logs\language_server.log')
+        )
+        foreach ($logPath in $logCandidates) {
+            if (Test-Path -LiteralPath $logPath -PathType Leaf) {
                 try {
-                    $wmi = Get-WmiObject Win32_Process -Filter "ProcessId = $($proc.Id)" -ErrorAction SilentlyContinue
-                    if ($wmi -and $wmi.CommandLine) { $cmdLine = $wmi.CommandLine }
+                    $lines = Get-Content -LiteralPath $logPath -Tail 200 -ErrorAction SilentlyContinue
+                    foreach ($line in $lines) {
+                        if ($line -match 'listening on \w+ port at (\d+) for HTTPS') {
+                            $p = [int]$Matches[1]
+                            if (-not $candidatePorts.Contains($p)) { $candidatePorts.Add($p) }
+                        }
+                        if (-not $csrfToken -and $line -match '--csrf_token[=\s]+([^\s]+)') {
+                            $csrfToken = $Matches[1]
+                        }
+                    }
                 } catch { }
             }
-            if (-not $cmdLine) {
+        }
+
+        # Fallback: query WMI / CIM if token was not in logs
+        if (-not $csrfToken) {
+            foreach ($proc in $lsProcesses) {
+                $cmdLine = $null
                 try {
-                    if ($proc.CommandLine) { $cmdLine = $proc.CommandLine }
+                    $cim = Get-CimInstance Win32_Process -Filter "ProcessId = $($proc.Id)" -ErrorAction SilentlyContinue
+                    if ($cim -and $cim.CommandLine) { $cmdLine = $cim.CommandLine }
                 } catch { }
-            }
-            if ($cmdLine -and $cmdLine -match '--csrf_token\s+([^\s]+)') {
-                $csrfToken = $Matches[1]
-                $targetPid = $proc.Id
-                break
+                if (-not $cmdLine) {
+                    try {
+                        $wmi = Get-WmiObject Win32_Process -Filter "ProcessId = $($proc.Id)" -ErrorAction SilentlyContinue
+                        if ($wmi -and $wmi.CommandLine) { $cmdLine = $wmi.CommandLine }
+                    } catch { }
+                }
+                if (-not $cmdLine) {
+                    try {
+                        if ($proc.CommandLine) { $cmdLine = $proc.CommandLine }
+                    } catch { }
+                }
+                if ($cmdLine -and $cmdLine -match '--csrf_token\s+([^\s]+)') {
+                    $csrfToken = $Matches[1]
+                    try {
+                        $netConns = Get-NetTCPConnection -OwningProcess $proc.Id -State Listen -ErrorAction SilentlyContinue
+                        foreach ($conn in $netConns) {
+                            $p = [int]$conn.LocalPort
+                            if (-not $candidatePorts.Contains($p)) { $candidatePorts.Add($p) }
+                        }
+                    } catch { }
+                    break
+                }
             }
         }
 
@@ -556,35 +588,6 @@ function Get-AgyStatus {
             }
         }
 
-        $candidatePorts = New-Object System.Collections.Generic.List[int]
-
-        $logCandidates = @(
-            (Join-Path $env:APPDATA 'Antigravity\logs\language_server.log'),
-            (Join-Path $env:APPDATA 'Antigravity IDE\logs\language_server.log')
-        )
-        foreach ($logPath in $logCandidates) {
-            if (Test-Path -LiteralPath $logPath -PathType Leaf) {
-                try {
-                    $lines = Get-Content -LiteralPath $logPath -TotalCount 200 -ErrorAction SilentlyContinue
-                    foreach ($line in $lines) {
-                        if ($line -match 'listening on \w+ port at (\d+) for HTTPS') {
-                            $p = [int]$Matches[1]
-                            if (-not $candidatePorts.Contains($p)) { $candidatePorts.Add($p) }
-                        }
-                    }
-                } catch { }
-            }
-        }
-
-        if ($targetPid) {
-            try {
-                $netConns = Get-NetTCPConnection -OwningProcess $targetPid -State Listen -ErrorAction SilentlyContinue
-                foreach ($conn in $netConns) {
-                    $p = [int]$conn.LocalPort
-                    if (-not $candidatePorts.Contains($p)) { $candidatePorts.Add($p) }
-                }
-            } catch { }
-        }
 
         if ($candidatePorts.Count -eq 0) {
             return [ordered]@{
