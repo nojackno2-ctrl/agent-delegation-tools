@@ -11,23 +11,27 @@ export const delegateTaskSchema = z.object({
   task_type: z
     .enum(['analysis', 'implementation', 'review', 'scaffolding'])
     .optional()
-    .default('analysis')
-    .describe('Task type to guide routing and model defaults (analysis/scaffolding -> AGY Flash, implementation -> Codex, review -> Claude).'),
+    .default('implementation')
+    .describe(
+      'Task type guiding routing and model defaults: analysis/scaffolding -> AGY (Gemini 3.7 Flash high), implementation/review -> Codex (GPT-5.6-Luna high). The Claude CLI is never auto-selected because it spends the parent agent\'s own subscription quota.'
+    ),
   sandbox: z
     .enum(['read-only', 'workspace-write', 'danger-full-access'])
     .optional()
-    .default('read-only')
-    .describe('Sandbox permission boundary. Use "workspace-write" when modifying files in the repo.'),
+    .default('workspace-write')
+    .describe(
+      'Sandbox permission boundary. Defaults to workspace-write so the subagent can read and modify files under work_dir without any interactive approval. Use "read-only" only for pure analysis.'
+    ),
   balance_quota: z
     .boolean()
     .optional()
     .default(true)
-    .describe('Automatically check live quota status and rebalance away from exhausted/unavailable backends.'),
+    .describe('Read live subscription quotas for all three CLIs before dispatch and route to the healthiest backend, failing over automatically when one is depleted.'),
   agent: z
     .enum(['auto', 'codex', 'claude', 'agy'])
     .optional()
     .default('auto')
-    .describe('Primary agent backend. Defaults to "auto" (routes by task_type and quota health).'),
+    .describe('Primary agent backend. Defaults to "auto": routes by task_type and live quota health, preferring the two external CLIs (agy, codex). Pass "claude" explicitly to force the Claude CLI.'),
   fallback_agent: z
     .enum(['codex', 'claude', 'agy', 'none'])
     .optional()
@@ -39,19 +43,27 @@ export const delegateTaskSchema = z.object({
   agy_model: z
     .string()
     .optional()
-    .describe('Model for Antigravity (e.g. "gemini-3.7-flash", "gemini-3.1-pro").'),
+    .describe('Model override for Antigravity. Default gemini-3.7-flash; use gemini-3.1-pro for deep architecture work.'),
   agy_effort: z
     .enum(['low', 'medium', 'high'])
     .optional()
-    .describe('Reasoning effort for Antigravity models.'),
+    .describe('Reasoning effort for Antigravity. Default high.'),
   claude_model: z
     .string()
     .optional()
-    .describe('Model override for Claude Code subagent.'),
+    .describe('Model override for the Claude CLI subagent. Default claude-sonnet-5.'),
+  claude_effort: z
+    .string()
+    .optional()
+    .describe('Reasoning effort for the Claude CLI subagent. Default high.'),
   codex_model: z
     .string()
     .optional()
-    .describe('Model override for Codex CLI subagent.'),
+    .describe('Model override for the Codex CLI subagent. Default gpt-5.6-luna.'),
+  codex_effort: z
+    .string()
+    .optional()
+    .describe('Reasoning effort for the Codex CLI subagent. Default high.'),
   timeout_sec: z
     .number()
     .int()
@@ -77,7 +89,9 @@ export async function handleDelegateTask(input: DelegateTaskInput) {
       agyModel: input.agy_model,
       agyEffort: input.agy_effort,
       claudeModel: input.claude_model,
+      claudeEffort: input.claude_effort,
       codexModel: input.codex_model,
+      codexEffort: input.codex_effort,
       timeoutSec: input.timeout_sec,
     });
 
@@ -124,18 +138,18 @@ export const delegateParallelSchema = z.object({
   task_type: z
     .enum(['analysis', 'implementation', 'review', 'scaffolding'])
     .optional()
-    .default('analysis')
+    .default('implementation')
     .describe('Task type for all batch tasks.'),
   sandbox: z
     .enum(['read-only', 'workspace-write', 'danger-full-access'])
     .optional()
-    .default('read-only')
-    .describe('Sandbox boundary for batch execution.'),
+    .default('workspace-write')
+    .describe('Sandbox boundary for batch execution. Defaults to workspace-write so workers can edit files without approval prompts.'),
   agent: z
     .enum(['auto', 'codex', 'claude', 'agy'])
     .optional()
     .default('auto')
-    .describe('Agent backend for parallel workers.'),
+    .describe('Agent backend for parallel workers. "auto" spreads the batch across the two external CLIs by live quota headroom.'),
   max_concurrency: z
     .number()
     .int()

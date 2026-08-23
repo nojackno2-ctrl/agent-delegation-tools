@@ -3,6 +3,7 @@ import { getDynamicQuotaHealth, markProviderDepleted } from '../quota/quota-serv
 import { invokeAgy } from '../invokers/agy-invoker.js';
 import { invokeCodex } from '../invokers/codex-invoker.js';
 import { invokeClaude } from '../invokers/claude-invoker.js';
+import { DEFAULT_SANDBOX, isExternalAgent, isWriteSandbox } from '../../core/defaults.js';
 
 export interface DelegateOptions {
   prompt: string;
@@ -15,26 +16,29 @@ export interface DelegateOptions {
   agyModel?: string;
   agyEffort?: 'low' | 'medium' | 'high';
   claudeModel?: string;
+  claudeEffort?: string;
   codexModel?: string;
+  codexEffort?: string;
   timeoutSec?: number;
 }
 
 export async function delegateTask(options: DelegateOptions): Promise<ExecutionResult & { usedAgent: AgentName }> {
-  const taskType = options.taskType || 'analysis';
-  const sandbox = options.sandbox || 'read-only';
+  const taskType = options.taskType || 'implementation';
+  const sandbox = options.sandbox || DEFAULT_SANDBOX;
   const balanceQuota = options.balanceQuota !== false;
 
-  // Determine initial target agent
+  // Auto-routing only ever picks an external CLI. The Claude CLI draws on the
+  // same subscription as the parent agent, so delegating to it offloads context
+  // but not quota; it is reachable only by naming it explicitly.
+  const explicitAgent = options.agent && options.agent !== 'auto' ? options.agent : null;
   let primaryAgent: AgentName;
-  if (options.agent && options.agent !== 'auto') {
-    primaryAgent = options.agent;
+  if (explicitAgent) {
+    primaryAgent = explicitAgent;
   } else {
     switch (taskType) {
       case 'implementation':
-        primaryAgent = 'codex';
-        break;
       case 'review':
-        primaryAgent = 'claude';
+        primaryAgent = 'codex';
         break;
       case 'analysis':
       case 'scaffolding':
@@ -51,40 +55,45 @@ export async function delegateTask(options: DelegateOptions): Promise<ExecutionR
     }
   }
 
-  // Dynamic Quota-Aware Load Balancing
+  // Dynamic quota-aware load balancing: read the live subscription state of all
+  // three CLIs and rank the healthy ones. External providers always outrank the
+  // Claude CLI, which is only reachable as a last resort or when named directly.
   if (balanceQuota) {
     try {
       const healthMap = await getDynamicQuotaHealth({ workDir: options.workDir, timeoutSec: 15 });
+
+      const rank = (a: AgentName, b: AgentName) => {
+        const externalDelta = Number(isExternalAgent(b)) - Number(isExternalAgent(a));
+        if (externalDelta !== 0) return externalDelta;
+        return healthMap[b].minRemainingPercent - healthMap[a].minRemainingPercent;
+      };
+
+      const available = (Object.keys(healthMap) as AgentName[]).filter((a) => healthMap[a].available);
+      const externalsUsable = available.some(isExternalAgent);
+
+      // The Claude CLI joins the chain only when it was named explicitly or when
+      // neither external CLI is usable.
+      const healthy = available
+        .filter((a) => isExternalAgent(a) || a === explicitAgent || !externalsUsable)
+        .sort(rank);
+
       const primaryHealth = healthMap[primaryAgent];
 
-      // If primary is not healthy, rebalance to the healthiest provider
-      if (primaryHealth && !primaryHealth.available) {
-        const sorted = (Object.keys(healthMap) as AgentName[])
-          .filter((a) => healthMap[a].available)
-          .sort((a, b) => healthMap[b].minRemainingPercent - healthMap[a].minRemainingPercent);
-
-        if (sorted.length > 0) {
-          const rebalancedPrimary = sorted[0];
-          fallbackChain.length = 0;
-          for (let i = 1; i < sorted.length; i++) {
-            fallbackChain.push(sorted[i]);
-          }
-          primaryAgent = rebalancedPrimary;
-        }
+      if (primaryHealth && !primaryHealth.available && healthy.length > 0) {
+        // Primary is depleted or logged out: promote the best remaining backend.
+        primaryAgent = healthy[0];
+        fallbackChain.length = 0;
+        fallbackChain.push(...healthy.slice(1));
       } else {
-        // Primary is healthy; add other healthy providers to fallback chain
-        const otherHealthy = (Object.keys(healthMap) as AgentName[])
-          .filter((a) => a !== primaryAgent && healthMap[a].available)
-          .sort((a, b) => healthMap[b].minRemainingPercent - healthMap[a].minRemainingPercent);
-
-        for (const cand of otherHealthy) {
-          if (!fallbackChain.includes(cand)) {
+        // Primary is healthy; queue the rest as ordered failover candidates.
+        for (const cand of healthy) {
+          if (cand !== primaryAgent && !fallbackChain.includes(cand)) {
             fallbackChain.push(cand);
           }
         }
       }
     } catch {
-      // If health query fails, proceed with default primary
+      // If the health query fails, proceed with the statically routed primary.
     }
   }
 
@@ -95,27 +104,27 @@ export async function delegateTask(options: DelegateOptions): Promise<ExecutionR
       case 'agy':
         return await invokeAgy({
           prompt: options.prompt,
-          mode: sandbox === 'workspace-write' || sandbox === 'danger-full-access' ? 'accept-edits' : 'plan',
+          mode: isWriteSandbox(sandbox) ? 'accept-edits' : 'plan',
           model: options.agyModel,
           effort: options.agyEffort,
           workDir: options.workDir,
           timeoutSec: options.timeoutSec,
-          skipPermissions: sandbox === 'workspace-write' || sandbox === 'danger-full-access',
         });
       case 'codex':
         return await invokeCodex({
           prompt: options.prompt,
           sandbox,
           model: options.codexModel,
+          effort: options.codexEffort,
           workDir: options.workDir,
           timeoutSec: options.timeoutSec,
-          approveForMe: sandbox === 'workspace-write' || sandbox === 'danger-full-access',
         });
       case 'claude':
         return await invokeClaude({
           prompt: options.prompt,
           mode: sandbox,
           model: options.claudeModel,
+          effort: options.claudeEffort,
           workDir: options.workDir,
           timeoutSec: options.timeoutSec,
         });

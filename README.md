@@ -27,15 +27,27 @@
 
 ---
 
+## 委派政策（預設行為）
+
+父代理是**調度員**：實作、重構、鷹架、批次修改、整份 codebase 閱讀等工作一律外送給 CLI 子代理執行，不自己動手，也不開 Claude 子代理。
+
+- **兩個外部 CLI 承擔主要負載。** `claude` 後端花的是和父代理同一份訂閱額度，只省 context 不省額度，因此自動路由永不選它；只有使用者指名、或 AGY 與 Codex 都耗盡時才會用到。
+- **額度決定路由。** `balance_quota` 預設開啟，派工前讀三個 CLI 的即時額度（10 秒快取），耗盡者自動跳過並轉移。
+- **子代理預設就有寫入權限。** `sandbox` 預設 `workspace-write`，子代理在 `work_dir` 底下直接讀寫檔案，沒有任何核准步驟；純分析才傳 `read-only`。
+
+MCP Server 會在連線時把這份政策以 `instructions` 送給客戶端，因此任何接上的代理都會依此行為。
+
+---
+
 ## 三大子代理後端與能力矩陣
 
 | 子代理後端 | MCP 工具 | 核心專長與適用情境 | 預設模型 | 額度消耗來源 |
 |---|---|---|---|---|
-| **Google Antigravity CLI** | `invoke_agy` | 超長脈絡閱讀、架構分析、Plan 規劃、低成本快速產出 | `gemini-3.7-flash` (支援 Low/Medium/High 推理，可選 Pro / Claude / GPT) | Google Antigravity |
-| **OpenAI Codex CLI** | `invoke_codex` | 跨檔案大型實作、深度代碼重構（內建 Windows 中文路徑 Junction） | `gpt-5.6-sol` (可選 o-series) | OpenAI / ChatGPT |
-| **Anthropic Claude Code** | `invoke_claude` | 深度安全審查、邏輯對齊、架構邊界掃描；支援 Session 接續 | `claude-3-7-sonnet` / `opus` | Anthropic Claude |
-| **智慧動態調度器** | `delegate_task` | 自動依任務類型路由（`analysis` $\to$ AGY, `review` $\to$ Claude, `implementation` $\to$ Codex）並即時負載均衡 | 智慧選型 | 依選用後端 |
-| **並行 Worker Pool** | `delegate_parallel` | 多任務並行批次分發執行（可自訂並行上限，預設 4） | 智慧選型 | 依選用後端 |
+| **Google Antigravity CLI** | `invoke_agy` | 超長脈絡閱讀、架構分析、Plan 規劃、低成本快速產出 | `gemini-3.7-flash` + effort `high`（可選 `gemini-3.1-pro`） | Google Antigravity |
+| **OpenAI Codex CLI** | `invoke_codex` | 跨檔案大型實作、深度代碼重構（內建 Windows 中文路徑 Junction） | `gpt-5.6-luna` + effort `high` | OpenAI / ChatGPT |
+| **Anthropic Claude Code** | `invoke_claude` | 深度安全審查、邏輯對齊、架構邊界掃描；支援 Session 接續 | `claude-sonnet-5` + effort `high` | Anthropic Claude（**與父代理同一份額度**） |
+| **智慧動態調度器** | `delegate_task` | 自動依任務類型路由（`analysis`/`scaffolding` $\to$ AGY，`implementation`/`review` $\to$ Codex）並即時負載均衡；自動路由**不會**選 Claude | 智慧選型 | 依選用後端 |
+| **並行 Worker Pool** | `delegate_parallel` | 多任務並行批次分發執行，在兩個外部 CLI 之間輪流分配（可自訂並行上限，預設 4） | 智慧選型 | 依選用後端 |
 | **即時配額檢測器** | `get_agent_quotas` | 零 Token 消耗即時讀取三大 CLI 訂閱用量、剩餘百分比與重置時間 | — | 0 Token |
 
 ---

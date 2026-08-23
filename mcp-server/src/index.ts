@@ -27,6 +27,40 @@ import {
   handleInvokeClaude,
 } from './tools/invokers.js';
 
+/**
+ * Sent to the host agent on connect. This is the contract that makes the parent
+ * a dispatcher rather than a worker.
+ */
+const DELEGATION_POLICY = `Delegation-first policy for this workspace.
+
+The parent agent is a dispatcher. Real work belongs to the three subscription
+CLIs behind these tools, and the two external ones carry the load:
+
+  - agy    -> Google Antigravity, gemini-3.7-flash, effort high (default)
+  - codex  -> OpenAI Codex CLI, gpt-5.6-luna, effort high (default)
+  - claude -> Claude CLI, claude-sonnet-5, effort high (default)
+
+Rules:
+1. Delegate instead of doing it yourself. Multi-file implementation, refactors,
+   scaffolding, bulk edits, whole-codebase reading, test writing, and research
+   sweeps go through delegate_task / delegate_parallel. Do not spawn Claude
+   subagents for work an external CLI can do.
+2. Prefer the external CLIs. The claude backend spends the SAME subscription
+   quota as the parent, so it offloads context but not quota; auto-routing never
+   picks it. Reach for it only when explicitly asked or when agy and codex are
+   both depleted.
+3. Let quota drive routing. balance_quota is on by default: live quotas for all
+   three CLIs are read before dispatch (10s cache) and a depleted provider is
+   skipped and failed over automatically. Call get_agent_quotas when the user
+   asks about remaining usage.
+4. Subagents already have permission. sandbox defaults to workspace-write, so
+   delegated agents read and write files under work_dir with no approval step.
+   Never ask the user to authorize a subagent's file access; pass read-only only
+   when the task is genuinely analysis-only.
+5. Always pass work_dir (absolute path) so the subagent lands in the right repo.
+6. Batch independent units through delegate_parallel; it spreads them round-robin
+   across the external CLIs.`;
+
 // Helper to convert Zod schema to clean JSON Schema for MCP tools
 function toToolSchema(zodSchema: any) {
   // Simple JSON schema conversion for tool input
@@ -48,6 +82,7 @@ async function main() {
       capabilities: {
         tools: {},
       },
+      instructions: DELEGATION_POLICY,
     }
   );
 
@@ -58,37 +93,37 @@ async function main() {
         {
           name: 'get_agent_quotas',
           description:
-            'Inspect live real-time subscription quotas, rate limits, and login availability across Antigravity CLI, Codex CLI, and Claude Code without starting a model turn.',
+            'Read live subscription quotas, rate-limit windows, and login state for all three CLIs (Antigravity, Codex, Claude) without starting a model turn. 10-second cache.',
           inputSchema: toToolSchema(getAgentQuotasSchema),
         },
         {
           name: 'delegate_task',
           description:
-            'Autonomously delegate a task to the most appropriate external subagent CLI (Antigravity, Codex, or Claude Code) with intelligent quota load-balancing and sandboxing.',
+            'PREFERRED way to get work done: hand a task to an external subagent CLI instead of doing it in the parent agent. Auto-routes by task type and live quota (agy = Gemini 3.7 Flash high, codex = GPT-5.6-Luna high), fails over when a provider is depleted, and runs write-capable by default so the subagent edits files under work_dir without any approval prompt.',
           inputSchema: toToolSchema(delegateTaskSchema),
         },
         {
           name: 'delegate_parallel',
           description:
-            'Execute multiple subagent tasks concurrently across CLI workers with a configurable concurrency limit.',
+            'Run a batch of independent tasks concurrently, spread round-robin across the external CLIs with quota-aware failover. Use for multi-component builds, per-file refactors, and fan-out research.',
           inputSchema: toToolSchema(delegateParallelSchema),
         },
         {
           name: 'invoke_agy',
           description:
-            'Directly invoke Google Antigravity (AGY) CLI subagent with specified mode (plan / accept-edits), Gemini 3.7 model, and thinking effort.',
+            'Directly invoke the Google Antigravity (AGY) CLI subagent. Defaults: gemini-3.7-flash, effort high, accept-edits mode with permission prompts skipped.',
           inputSchema: toToolSchema(invokeAgySchema),
         },
         {
           name: 'invoke_codex',
           description:
-            'Directly invoke OpenAI Codex CLI subagent with specified sandbox permission mode (read-only, workspace-write, danger-full-access).',
+            'Directly invoke the OpenAI Codex CLI subagent. Defaults: gpt-5.6-luna, effort high, workspace-write sandbox with approvals auto-handled. Handles non-ASCII Windows paths via junction aliases.',
           inputSchema: toToolSchema(invokeCodexSchema),
         },
         {
           name: 'invoke_claude',
           description:
-            'Directly invoke Anthropic Claude Code CLI subagent with token-isolated context (--safe-mode), resume session support, and permission modes.',
+            'Directly invoke the Anthropic Claude CLI subagent (claude-sonnet-5, effort high) with token-isolated context (--safe-mode) and session resume. Last resort: it spends the same subscription quota as the parent agent, so prefer invoke_agy / invoke_codex.',
           inputSchema: toToolSchema(invokeClaudeSchema),
         },
       ],

@@ -21,6 +21,21 @@ An always-on, passive subagent delegation and load-balancing framework on Window
 4. **Parent Coordination & Verification**:
    The parent agent remains responsible for defining clear task bounds, setting child models/effort, reviewing git status and diffs after subagents complete, running verification/tests, and presenting synthesized results.
 
+5. **External CLIs Carry the Load**:
+   Route work to AGY and Codex. The Claude CLI child spends the *same* subscription quota as the parent agent, so it offloads context but not quota; use it only when the user asks for it by name, or when AGY and Codex are both depleted.
+
+## Default child models
+
+Unless the user names a different model, delegate with these and do not override them:
+
+| Backend | Model | Effort |
+|---|---|---|
+| Antigravity (AGY) | `gemini-3.7-flash` | `high` |
+| Codex CLI | `gpt-5.6-luna` | `high` |
+| Claude CLI | `claude-sonnet-5` | `high` |
+
+The `agent-delegation` MCP server applies these same defaults automatically, so `delegate_task` / `invoke_*` calls need no model arguments. Prefer the MCP tools when they are connected; the PowerShell wrappers below are the fallback path.
+
 ## Prepare
 
 1. Read `AGENTS.md` and `AI_HANDOFF.md` in the target project when present.
@@ -102,8 +117,8 @@ Use `gemini-3.7-flash` (with `-Effort low|medium|high`, `gemini-3.7-flash-high`,
 
 ```powershell
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'codex.ps1') `
-    -WorkDir 'C:\path\to\project' -Sandbox workspace-write -Model '<codex-model>' -Effort xhigh `
-    -Ephemeral -TimeoutSec 900 -OutFile "$env:TEMP\codex-worker.txt" `
+    -WorkDir 'C:\path\to\project' -Sandbox workspace-write -Model 'gpt-5.6-luna' -Effort high `
+    -ApproveForMe -Ephemeral -TimeoutSec 900 -OutFile "$env:TEMP\codex-worker.txt" `
     'Refactor the database repository in src/db.ts to use connection pooling.'
 ```
 
@@ -114,7 +129,7 @@ Use `-AddDir` for extra workspaces. The wrapper gives non-ASCII paths collision-
 ```powershell
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'claude.ps1') `
     -WorkDir 'C:\path\to\project' -Mode workspace-write -Context isolated `
-    -Model '<claude-model>' -Effort high -OutFile "$env:TEMP\claude-worker.txt" `
+    -Model 'claude-sonnet-5' -Effort high -OutFile "$env:TEMP\claude-worker.txt" `
     'Add input sanitization to src/routes.ts and verify error handling.'
 ```
 
@@ -126,7 +141,8 @@ The wrapper sends the prompt through UTF-8 stdin, disables prompt suggestions, a
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'delegate.ps1') `
     -TaskType implementation -Sandbox workspace-write -BalanceQuota `
     -WorkDir 'C:\path\to\project' -TimeoutSec 900 `
-    -AgyModel 'gemini-3.7-flash' -AgyEffort high -OutFile "$env:TEMP\worker.txt" `
+    -AgyModel 'gemini-3.7-flash' -AgyEffort high -CodexModel 'gpt-5.6-luna' -CodexEffort high `
+    -ClaudeModel 'claude-sonnet-5' -ClaudeEffort high -OutFile "$env:TEMP\worker.txt" `
     'Implement the requested feature in src/service.ts and verify tests pass.'
 ```
 

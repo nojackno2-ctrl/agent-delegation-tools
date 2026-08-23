@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__agent-delegation",
+      "mcp__agent-delegation__get_agent_quotas",
+      "mcp__agent-delegation__delegate_task",
+      "mcp__agent-delegation__delegate_parallel",
+      "mcp__agent-delegation__invoke_agy",
+      "mcp__agent-delegation__invoke_codex",
+      "mcp__agent-delegation__invoke_claude"
+    ]
+  }
+}

@@ -1,5 +1,23 @@
 # AI handoff
 
+## 2026-08-23 Delegation-First Policy, Default Models, and Prompt-Free Subagents
+
+- **Objective**: Make the parent agent a dispatcher that pushes work to the two external CLIs, drive routing from live quota, remove every permission prompt from delegated subagents, and pin per-backend default models (AGY `gemini-3.7-flash` high, Codex `gpt-5.6-luna` high, Claude `claude-sonnet-5` high).
+- **Changes**:
+  - Added `mcp-server/src/core/defaults.ts` as the single source of truth for default models/effort, `DEFAULT_SANDBOX = workspace-write`, and external-vs-Claude provider classification.
+  - Invokers now apply those defaults: `agy-invoker` defaults to accept-edits and always passes `--dangerously-skip-permissions` (opt-out via `skipPermissions: false`); `codex-invoker` defaults to `gpt-5.6-luna`/high, adds `--approve-for-me` on write sandboxes, and now actually passes `--output-last-message` (it previously read a temp file the CLI was never told to write) plus `--skip-git-repo-check`; `claude-invoker` defaults to `claude-sonnet-5`/high and maps `workspace-write` to `bypassPermissions` so a headless child cannot stall on a prompt.
+  - Tool schema defaults flipped to write-capable: `delegate_task`/`delegate_parallel` default `sandbox=workspace-write`, `task_type=implementation`; `invoke_*` carry the per-backend model/effort defaults.
+  - `delegate-service` auto-routing now only ever selects an external CLI (`analysis`/`scaffolding` -> agy, `implementation`/`review` -> codex). Quota ranking puts externals ahead of Claude, and the Claude CLI enters the candidate chain only when named explicitly or when neither external is available. Added `claudeEffort`/`codexEffort` pass-through.
+  - `parallel-service` spreads an `auto` batch round-robin across agy/codex.
+  - MCP server now sends a `DELEGATION_POLICY` `instructions` block on connect, so any connected client inherits the policy; tool descriptions rewritten to state the defaults and the Claude-quota caveat (mirrored in `register.ts`).
+  - PowerShell parity: `delegate.ps1` defaults to `-TaskType implementation -Sandbox workspace-write`, resolves per-backend default models/effort, routes `review` to codex, ranks externals first during quota rebalance, and auto-enables `-AgySkipPermissions`/`-ApproveForMe` on write sandboxes (after the candidate chain is built, so the existing guards still hold).
+  - Added `CLAUDE.md` (delegation policy for the parent agent) and documented the policy plus new default-model matrix in `README.md` and `SKILL.md`.
+- **Verification**:
+  - `npm run build` clean; Node test suite 32/32 passed, including a new `src/tests/defaults.test.ts` that pins the three default models/efforts and the write-capable schema defaults.
+  - `validate.ps1` 52/52 passed after `sync.ps1 -InstallGlobal`; all seven `tests/*.Tests.ps1` suites passed.
+  - `install.ps1` re-synced the updated `delegate.ps1`/`SKILL.md` to the codex, agents, claude, and copilot skill homes; every copied file matched its source hash.
+- **Not done**: the Claude Code permission allowlist for `mcp__agent-delegation__*` could not be written (settings.json edits were blocked in this session). The user must add it to `.claude/settings.json` or `~/.claude/settings.json` manually.
+
 ## 2026-08-22 GitHub Synchronization & Native MCP Architecture Release
 
 - **Objective**: Stage, commit, and push the full native TypeScript MCP server implementation, comprehensive test suite, synchronization tooling, and multi-client registration enhancements to GitHub remote repository (`origin/master`).

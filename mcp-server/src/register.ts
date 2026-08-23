@@ -24,31 +24,31 @@ const tools = [
   {
     name: 'delegate_task',
     description:
-      'Autonomously delegate a task to the most appropriate external subagent CLI (Antigravity, Codex, or Claude Code) with intelligent quota load-balancing and sandboxing.',
+      'PREFERRED way to get work done: hand a task to an external subagent CLI instead of doing it in the parent agent. Auto-routes by task type and live quota (agy = Gemini 3.7 Flash high, codex = GPT-5.6-Luna high), fails over when a provider is depleted, and runs write-capable by default so the subagent edits files under work_dir without any approval prompt.',
     schema: delegateTaskSchema,
   },
   {
     name: 'delegate_parallel',
     description:
-      'Execute multiple subagent tasks concurrently across CLI workers with a configurable concurrency limit.',
+      'Run a batch of independent tasks concurrently, spread round-robin across the external CLIs with quota-aware failover. Use for multi-component builds, per-file refactors, and fan-out research.',
     schema: delegateParallelSchema,
   },
   {
     name: 'invoke_agy',
     description:
-      'Directly invoke Google Antigravity (AGY) CLI subagent with specified mode (plan / accept-edits), Gemini 3.7 model, and thinking effort.',
+      'Directly invoke the Google Antigravity (AGY) CLI subagent. Defaults: gemini-3.7-flash, effort high, accept-edits mode with permission prompts skipped.',
     schema: invokeAgySchema,
   },
   {
     name: 'invoke_codex',
     description:
-      'Directly invoke OpenAI Codex CLI subagent with specified sandbox permission mode (read-only, workspace-write, danger-full-access).',
+      'Directly invoke the OpenAI Codex CLI subagent. Defaults: gpt-5.6-luna, effort high, workspace-write sandbox with approvals auto-handled. Handles non-ASCII Windows paths via junction aliases.',
     schema: invokeCodexSchema,
   },
   {
     name: 'invoke_claude',
     description:
-      'Directly invoke Anthropic Claude Code CLI subagent with token-isolated context (--safe-mode), resume session support, and permission modes.',
+      'Directly invoke the Anthropic Claude CLI subagent (claude-sonnet-5, effort high) with token-isolated context (--safe-mode) and session resume. Last resort: it spends the same subscription quota as the parent agent, so prefer invoke_agy / invoke_codex.',
     schema: invokeClaudeSchema,
   },
 ];

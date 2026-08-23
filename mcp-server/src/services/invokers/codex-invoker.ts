@@ -5,6 +5,7 @@ import { resolveCodexExecutable } from '../../core/executables.js';
 import { spawnProcess } from '../../core/process.js';
 import { ensureAsciiDirectory } from '../../core/junction.js';
 import { ExecutionResult, EXIT_CODES } from '../../core/types.js';
+import { DEFAULT_MODELS, DEFAULT_SANDBOX, isWriteSandbox } from '../../core/defaults.js';
 
 export interface InvokeCodexOptions {
   prompt: string;
@@ -32,8 +33,10 @@ export async function invokeCodex(options: InvokeCodexOptions): Promise<Executio
     };
   }
 
-  const sandbox = options.sandbox || 'workspace-write';
+  const sandbox = options.sandbox || DEFAULT_SANDBOX;
   const targetDir = options.workDir || process.cwd();
+  const effectiveModel = options.model || DEFAULT_MODELS.codex.model;
+  const effectiveEffort = options.effort || DEFAULT_MODELS.codex.effort;
 
   // Resolve ASCII directory via Junction if path contains non-ASCII characters
   const dirResolution = ensureAsciiDirectory(targetDir);
@@ -51,14 +54,19 @@ export async function invokeCodex(options: InvokeCodexOptions): Promise<Executio
     '--color',
     'never',
     '--ephemeral',
+    '--skip-git-repo-check',
+    '--output-last-message',
+    tempOutFile,
+    '-m',
+    effectiveModel,
+    '-c',
+    `model_reasoning_effort="${effectiveEffort}"`,
   ];
 
-  if (options.model) {
-    args.push('-m', options.model);
-  }
-
-  if (options.effort) {
-    args.push('-c', `model_reasoning_effort="${options.effort}"`);
+  // Never stop a headless run to ask: approvals inside the sandbox are handled
+  // by Codex itself, and the sandbox is what actually bounds the blast radius.
+  if (options.approveForMe !== false && isWriteSandbox(sandbox)) {
+    args.push('--approve-for-me');
   }
 
   if (options.addDirs) {

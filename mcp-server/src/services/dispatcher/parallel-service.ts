@@ -1,5 +1,6 @@
 import { AgentName, TargetAgent, TaskType, SandboxMode } from '../../core/types.js';
 import { delegateTask } from './delegate-service.js';
+import { EXTERNAL_AGENTS } from '../../core/defaults.js';
 
 export interface ParallelTaskOptions {
   tasks: string[];
@@ -26,6 +27,11 @@ export async function delegateParallel(options: ParallelTaskOptions): Promise<Pa
 
   let currentIndex = 0;
 
+  // In "auto" mode the batch is spread round-robin over the two external CLIs so
+  // one provider does not absorb the whole burst. delegateTask still fails over
+  // per task when the assigned backend turns out to be depleted.
+  const autoSpread = !options.agent || options.agent === 'auto';
+
   async function worker() {
     while (currentIndex < options.tasks.length) {
       const idx = currentIndex++;
@@ -35,7 +41,7 @@ export async function delegateParallel(options: ParallelTaskOptions): Promise<Pa
         prompt,
         taskType: options.taskType,
         sandbox: options.sandbox,
-        agent: options.agent,
+        agent: autoSpread ? EXTERNAL_AGENTS[idx % EXTERNAL_AGENTS.length] : options.agent,
         workDir: options.workDir,
         timeoutSec: options.timeoutSec,
         balanceQuota: true,

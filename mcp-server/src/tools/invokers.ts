@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { invokeAgy } from '../services/invokers/agy-invoker.js';
 import { invokeCodex } from '../services/invokers/codex-invoker.js';
 import { invokeClaude } from '../services/invokers/claude-invoker.js';
+import { DEFAULT_MODELS } from '../core/defaults.js';
 
 // --- Antigravity (AGY) Invoker ---
 export const invokeAgySchema = z.object({
@@ -9,18 +10,20 @@ export const invokeAgySchema = z.object({
   mode: z
     .enum(['plan', 'accept-edits', 'read-only', 'workspace-write'])
     .optional()
-    .default('plan')
-    .describe('AGY execution mode (plan = read-only analysis, accept-edits = code changes).'),
+    .default('accept-edits')
+    .describe(
+      'AGY execution mode. Defaults to accept-edits: the subagent may create and modify files in work_dir without asking. Use plan/read-only for analysis only.'
+    ),
   model: z
     .string()
     .optional()
-    .default('gemini-3.7-flash')
-    .describe('Model name (e.g. gemini-3.7-flash, gemini-3.1-pro, claude-3-5-sonnet).'),
+    .default(DEFAULT_MODELS.agy.model)
+    .describe('Model name. Defaults to gemini-3.7-flash; gemini-3.1-pro for deep architecture work.'),
   effort: z
     .enum(['low', 'medium', 'high'])
     .optional()
-    .default('low')
-    .describe('Thinking effort for models that support it.'),
+    .default(DEFAULT_MODELS.agy.effort)
+    .describe('Thinking effort. Defaults to high.'),
   work_dir: z.string().optional().describe('Working directory.'),
   timeout_sec: z.number().int().min(10).max(3600).optional().default(900),
 });
@@ -58,10 +61,20 @@ export const invokeCodexSchema = z.object({
   sandbox: z
     .enum(['read-only', 'workspace-write', 'danger-full-access'])
     .optional()
-    .default('read-only')
-    .describe('Codex sandbox permission boundary.'),
-  model: z.string().optional().describe('Model override for Codex CLI.'),
-  effort: z.string().optional().describe('Reasoning effort level.'),
+    .default('workspace-write')
+    .describe(
+      'Codex sandbox permission boundary. Defaults to workspace-write: the subagent edits files under work_dir and approvals are auto-handled, so the run never blocks on a prompt.'
+    ),
+  model: z
+    .string()
+    .optional()
+    .default(DEFAULT_MODELS.codex.model)
+    .describe('Model for Codex CLI. Defaults to gpt-5.6-luna.'),
+  effort: z
+    .string()
+    .optional()
+    .default(DEFAULT_MODELS.codex.effort)
+    .describe('Reasoning effort (low|medium|high|xhigh|max). Defaults to high.'),
   work_dir: z.string().optional().describe('Working directory.'),
   timeout_sec: z.number().int().min(10).max(3600).optional().default(900),
 });
@@ -99,15 +112,25 @@ export const invokeClaudeSchema = z.object({
   mode: z
     .enum(['plan', 'accept-edits', 'read-only', 'workspace-write', 'danger-full-access'])
     .optional()
-    .default('plan')
-    .describe('Permission mode.'),
+    .default('workspace-write')
+    .describe(
+      'Permission mode. Defaults to workspace-write, which runs the headless child unattended (no permission prompts) inside work_dir. Note: this backend spends the same Claude subscription quota as the parent, so prefer invoke_agy / invoke_codex.'
+    ),
   context: z
     .enum(['isolated', 'project'])
     .optional()
     .default('isolated')
     .describe('Context mode: "isolated" uses --safe-mode (90%+ token reduction), "project" loads project CLAUDE.md/tools.'),
-  model: z.string().optional().describe('Model override.'),
-  effort: z.string().optional().describe('Effort level.'),
+  model: z
+    .string()
+    .optional()
+    .default(DEFAULT_MODELS.claude.model)
+    .describe('Model. Defaults to claude-sonnet-5.'),
+  effort: z
+    .string()
+    .optional()
+    .default(DEFAULT_MODELS.claude.effort)
+    .describe('Effort level (low|medium|high|xhigh|max). Defaults to high.'),
   session_id: z.string().optional().describe('Resume or fork a previous session ID.'),
   resume: z.boolean().optional().describe('Resume the session specified by session_id.'),
   work_dir: z.string().optional().describe('Working directory.'),

@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import { resolveClaudeExecutable } from '../../core/executables.js';
 import { spawnProcess } from '../../core/process.js';
 import { ExecutionResult, EXIT_CODES } from '../../core/types.js';
+import { DEFAULT_MODELS, DEFAULT_SANDBOX } from '../../core/defaults.js';
 
 export interface InvokeClaudeOptions {
   prompt: string;
@@ -33,9 +34,13 @@ export async function invokeClaude(options: InvokeClaudeOptions): Promise<Execut
     };
   }
 
-  let permissionMode = options.mode || 'plan';
+  // A delegated child runs headless: any mode that can still raise a prompt
+  // (acceptEdits stops on Bash, plan stops on writes) would hang until timeout.
+  // Write-capable delegation therefore runs unattended, bounded by workDir.
+  let permissionMode = options.mode || DEFAULT_SANDBOX;
   if (permissionMode === 'read-only') permissionMode = 'plan';
-  if (permissionMode === 'workspace-write') permissionMode = 'acceptEdits';
+  if (permissionMode === 'workspace-write') permissionMode = 'bypassPermissions';
+  if (permissionMode === 'accept-edits') permissionMode = 'acceptEdits';
   if (permissionMode === 'danger-full-access') permissionMode = 'bypassPermissions';
 
   const isIsolated = options.context !== 'project';
@@ -48,13 +53,8 @@ export async function invokeClaude(options: InvokeClaudeOptions): Promise<Execut
     args.push('--safe-mode');
   }
 
-  if (options.model) {
-    args.push('--model', options.model);
-  }
-
-  if (options.effort) {
-    args.push('--effort', options.effort);
-  }
+  args.push('--model', options.model || DEFAULT_MODELS.claude.model);
+  args.push('--effort', options.effort || DEFAULT_MODELS.claude.effort);
 
   if (options.sessionId) {
     if (options.resume) {

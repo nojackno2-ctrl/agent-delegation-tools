@@ -15,11 +15,11 @@ param(
     [string[]]$FallbackAgent = @(),
 
     [ValidateSet('analysis', 'implementation', 'scaffolding', 'review')]
-    [string]$TaskType = 'analysis',
+    [string]$TaskType = 'implementation',
 
-    # The dispatcher is read-only unless writing is selected explicitly.
+    # Delegated children are write-capable by default; pass read-only for pure analysis.
     [ValidateSet('read-only', 'workspace-write', 'danger-full-access')]
-    [string]$Sandbox = 'read-only',
+    [string]$Sandbox = 'workspace-write',
 
     # Backward-compatible primary-child settings. Provider-specific values below win.
     [string]$Model,
@@ -199,6 +199,18 @@ function Resolve-OutputPath {
     return $fullPath
 }
 
+# Fallback child settings when the parent supplies none. Explicit parameters win.
+$script:DefaultBackendModel = @{
+    agy    = 'gemini-3.7-flash'
+    codex  = 'gpt-5.6-luna'
+    claude = 'claude-sonnet-5'
+}
+$script:DefaultBackendEffort = @{
+    agy    = 'high'
+    codex  = 'high'
+    claude = 'high'
+}
+
 function Get-BackendModel {
     param([Parameter(Mandatory = $true)][string]$Backend)
 
@@ -208,8 +220,8 @@ function Get-BackendModel {
         'claude' { $ClaudeModel }
     }
     if ($specific) { return $specific }
-    if ($Backend -eq $script:primaryAgent) { return $Model }
-    return $null
+    if ($Backend -eq $script:primaryAgent -and $Model) { return $Model }
+    return $script:DefaultBackendModel[$Backend]
 }
 
 function Get-BackendEffort {
@@ -221,8 +233,8 @@ function Get-BackendEffort {
         'claude' { $ClaudeEffort }
     }
     if ($specific) { return $specific }
-    if ($Backend -eq $script:primaryAgent) { return $Effort }
-    return $null
+    if ($Backend -eq $script:primaryAgent -and $Effort) { return $Effort }
+    return $script:DefaultBackendEffort[$Backend]
 }
 
 function New-ContinuationPrompt {
@@ -387,12 +399,14 @@ if ($depth -ge 1) {
     throw "Refusing recursive delegation: AGENT_DELEGATION_DEPTH=$depth."
 }
 
+# Auto-routing only picks an external CLI: a Claude child spends the same
+# subscription quota as the parent, so it must be requested by name.
 $script:primaryAgent = $Agent
 if ($script:primaryAgent -eq 'auto') {
     $script:primaryAgent = switch ($TaskType) {
         'analysis'       { 'agy' }
         'scaffolding'    { 'agy' }
-        'review'         { 'claude' }
+        'review'         { 'codex' }
         'implementation' { 'codex' }
     }
 }
@@ -412,12 +426,21 @@ foreach ($fallbackValue in @($FallbackAgent)) {
 if ($BalanceQuota) {
     $quotaHealth = Get-DynamicQuotaHealth -ScriptDir $script:scriptDirectory -CodexExecutable $CodexPath -TargetWorkDir $WorkDir
     if ($quotaHealth) {
+        # External CLIs are considered first; the Claude CLI joins only when
+        # neither of them has headroom, since it shares the parent's quota.
+        $externalCandidates = @('agy', 'codex')
+        $externalsUsable = @($externalCandidates | Where-Object {
+            $ch = $quotaHealth[$_]
+            $ch -and $ch.Available -and $ch.MaxRemainingPercent -gt 10
+        })
+        $rebalanceCandidates = if ($externalsUsable.Count -gt 0) { $externalCandidates } else { @('agy', 'codex', 'claude') }
+
         $primaryHealth = $quotaHealth[$script:primaryAgent]
         $isDepleted = (-not $primaryHealth -or -not $primaryHealth.Available -or $primaryHealth.MaxRemainingPercent -le 10)
         if ($isDepleted) {
             $bestCandidate = $null
             $bestPct = -1
-            foreach ($candidate in @('agy', 'claude', 'codex')) {
+            foreach ($candidate in $rebalanceCandidates) {
                 $ch = $quotaHealth[$candidate]
                 if ($ch -and $ch.Available -and $ch.MaxRemainingPercent -gt $bestPct) {
                     $bestPct = $ch.MaxRemainingPercent
@@ -433,7 +456,7 @@ if ($BalanceQuota) {
         }
 
         if ($normalizedFallbackAgents.Count -eq 0) {
-            foreach ($cand in @('agy', 'claude', 'codex')) {
+            foreach ($cand in $rebalanceCandidates) {
                 if ($cand -ne $script:primaryAgent) {
                     $ch = $quotaHealth[$cand]
                     if ($ch -and $ch.Available -and $ch.MaxRemainingPercent -gt 10) {
@@ -445,13 +468,16 @@ if ($BalanceQuota) {
     }
 }
 
-if ($Sandbox -eq 'workspace-write' -and $script:primaryAgent -eq 'agy' -and $BalanceQuota) {
-    $AgySkipPermissions = $true
-}
-
 $candidateAgents = New-Object 'Collections.Generic.List[string]'
 foreach ($candidate in @($script:primaryAgent) + @($normalizedFallbackAgents)) {
     if (-not $candidateAgents.Contains($candidate)) { $candidateAgents.Add($candidate) }
+}
+
+# A headless child cannot answer an approval prompt, so a write-capable run must
+# never be able to raise one. The sandbox and work dir are the real boundary.
+if ($Sandbox -eq 'workspace-write') {
+    if ($candidateAgents.Contains('agy')) { $AgySkipPermissions = $true }
+    $ApproveForMe = $true
 }
 
 if ($Sandbox -eq 'danger-full-access' -and $candidateAgents.Contains('agy')) {
