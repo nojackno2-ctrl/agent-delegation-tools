@@ -66,6 +66,13 @@ try {
 }
 "@
 
+    $env:FAKE_AGY_CLI_USAGE_OUTPUT = @"
+Gemini Models`tWeekly Limit Remaining`t20%`t2026-08-25T23:40:58Z
+Gemini Models`tFive Hour Limit Remaining`t99%`t2026-08-24T14:39:11Z
+Claude and GPT models`tWeekly Limit Remaining`t66%`t2026-08-28T13:56:54Z
+Claude and GPT models`tFive Hour Limit Remaining`t100%`t2026-08-24T17:38:51Z
+"@
+
     # 1. Test All-agent query with JSON output
     $rendered = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script `
         -Agent all -CodexPath $fakeCodex -WorkDir $testRoot -TimeoutSec 5 -OutFile $outFile -Json
@@ -102,15 +109,16 @@ try {
     # AGY Verification
     $agy = $statuses | Where-Object agent -eq 'agy'
     Assert-Equal 'available' $agy.availability 'AGY usage should be marked available.'
-    Assert-Equal 2 @($agy.windows).Count 'AGY should have 2 active pools (Gemini and Claude/GPT).'
-    $agyGemini = $agy.windows | Where-Object name -eq 'agy (Gemini)'
-    Assert-Equal 10 $agyGemini.usedPercent 'AGY Gemini used percentage should be 10% (100 - 90%).'
-    Assert-Equal 90 $agyGemini.remainingPercent 'AGY Gemini remaining percentage should be 90%.'
-    Assert-Equal '2026-08-18T05:25:50Z' $agyGemini.resetsAt 'AGY Gemini reset timestamp should match response.'
-    $agyClaude = $agy.windows | Where-Object name -eq 'agy (Claude / GPT)'
-    Assert-Equal 0 $agyClaude.usedPercent 'AGY Claude/GPT used percentage should be 0%.'
-    Assert-Equal 100 $agyClaude.remainingPercent 'AGY Claude/GPT remaining percentage should be 100%.'
-    Assert-Equal '2026-08-18T09:09:25Z' $agyClaude.resetsAt 'AGY Claude/GPT reset timestamp should match response.'
+    Assert-Equal 4 @($agy.windows).Count 'AGY should have weekly and five-hour windows for both model pools.'
+    $agyGeminiWeekly = $agy.windows | Where-Object name -eq 'agy (Gemini) 7d'
+    Assert-Equal 80 $agyGeminiWeekly.usedPercent 'AGY Gemini weekly used percentage should be 80%.'
+    Assert-Equal 20 $agyGeminiWeekly.remainingPercent 'AGY Gemini weekly remaining percentage should be 20%.'
+    Assert-Equal 10080 $agyGeminiWeekly.windowDurationMins 'AGY Gemini weekly duration should be 10080 minutes.'
+    Assert-Equal '2026-08-25T23:40:58Z' $agyGeminiWeekly.resetsAt 'AGY Gemini weekly reset timestamp should match output.'
+    $agyClaudeFiveHour = $agy.windows | Where-Object name -eq 'agy (Claude / GPT) 5h'
+    Assert-Equal 0 $agyClaudeFiveHour.usedPercent 'AGY Claude/GPT five-hour used percentage should be 0%.'
+    Assert-Equal 100 $agyClaudeFiveHour.remainingPercent 'AGY Claude/GPT five-hour remaining percentage should be 100%.'
+    Assert-Equal 300 $agyClaudeFiveHour.windowDurationMins 'AGY Claude/GPT five-hour duration should be 300 minutes.'
 
     # 2. Test Root forwarder compatibility
     $rootJson = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $compatibilityScript `
@@ -138,7 +146,7 @@ try {
     $textCombined = $textOutput -join [Environment]::NewLine
     Assert-True ($textCombined -match 'codex codex: 93% remaining') 'Text rendering missing Codex remaining info.'
     Assert-True ($textCombined -match 'claude Claude \(5h\): 93% remaining') 'Text rendering missing Claude 5h remaining info.'
-    Assert-True ($textCombined -match 'agy agy \(Gemini\): 90% remaining') 'Text rendering missing AGY Gemini remaining info.'
+    Assert-True ($textCombined -match 'agy agy \(Gemini\) 7d: 20% remaining') 'Text rendering missing AGY Gemini weekly remaining info.'
 
     # 5. Test Error Handling / Unavailable Responses
     $env:FAKE_CLAUDE_STATUS_RESPONSE = '{"error":{"message":"invalid bearer token"}}'
@@ -147,6 +155,7 @@ try {
     Assert-Equal 'unavailable' $claudeError.availability 'Claude error response should be marked unavailable.'
     Assert-True ($claudeError.message -match 'invalid bearer token') 'Claude error message should be preserved.'
 
+    Remove-Item -LiteralPath 'Env:FAKE_AGY_CLI_USAGE_OUTPUT' -ErrorAction SilentlyContinue
     $env:FAKE_AGY_STATUS_RESPONSE = '{"error":{"message":"invalid CSRF token"}}'
     $agyErrorJson = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Agent agy -Json
     $agyError = $agyErrorJson -join [Environment]::NewLine | ConvertFrom-Json
@@ -165,7 +174,7 @@ try {
     'status.Tests.ps1: all tests passed.'
 }
 finally {
-    foreach ($name in @('FAKE_CODEX_STATUS_ARGS_FILE','FAKE_CODEX_STATUS_INPUT_FILE','FAKE_CODEX_STATUS_RESPONSE','FAKE_CODEX_STATUS_SLEEP_MS','FAKE_CLAUDE_STATUS_RESPONSE','FAKE_AGY_STATUS_RESPONSE')) {
+    foreach ($name in @('FAKE_CODEX_STATUS_ARGS_FILE','FAKE_CODEX_STATUS_INPUT_FILE','FAKE_CODEX_STATUS_RESPONSE','FAKE_CODEX_STATUS_SLEEP_MS','FAKE_CLAUDE_STATUS_RESPONSE','FAKE_AGY_STATUS_RESPONSE','FAKE_AGY_CLI_USAGE_OUTPUT')) {
         Remove-Item -LiteralPath ("Env:$name") -ErrorAction SilentlyContinue
     }
     if ($testRoot.StartsWith($safeTempRoot, [StringComparison]::OrdinalIgnoreCase)) {

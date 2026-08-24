@@ -18,7 +18,7 @@ const tools = [
   {
     name: 'get_agent_quotas',
     description:
-      'Inspect live real-time subscription quotas, rate limits, and login availability across Antigravity CLI, Codex CLI, and Claude Code without starting a model turn. Features built-in 10-second TTL caching for instant sub-millisecond response.',
+      'Inspect live 7-day subscription quotas, shorter rate-limit windows, and login availability across Antigravity CLI, Codex CLI, and Claude Code without starting a model turn. AGY uses the official /usage slash command. Features built-in 10-second TTL caching.',
     schema: getAgentQuotasSchema,
   },
   {

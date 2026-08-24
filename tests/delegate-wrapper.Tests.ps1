@@ -88,7 +88,7 @@ try {
     $env:FAKE_CODEX_LOGGED_IN = 'true'
 
     Clear-BackendEvidence $evidenceFiles
-    $analysis = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_AGY -WorkDir $env:TEST_WORKDIR -AddDir $env:TEST_ADDDIR -OutFile $env:TEST_OUTFILE -Prompt $env:TEST_PROMPT'
+    $analysis = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType analysis -Sandbox read-only -AgyPath $env:TEST_AGY -WorkDir $env:TEST_WORKDIR -AddDir $env:TEST_ADDDIR -OutFile $env:TEST_OUTFILE -Prompt $env:TEST_PROMPT'
     Assert-Equal 0 $analysis.ExitCode ('Default analysis dispatch failed: ' + ($analysis.Output -join [Environment]::NewLine))
     Assert-True (Test-Path -LiteralPath $agyArgsFile -PathType Leaf) 'Default analysis should route to AGY.'
     Assert-True (-not (Test-Path -LiteralPath $claudeArgsFile)) 'Analysis dispatch must not also launch Claude.'
@@ -100,7 +100,7 @@ try {
 
     Clear-BackendEvidence $evidenceFiles
     $env:FAKE_CLAUDE_OUTPUT = 'review result'
-    $review = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType review -ClaudePath $env:TEST_CLAUDE -WorkDir $env:TEST_WORKDIR -OutFile $env:TEST_OUTFILE -Prompt $env:TEST_PROMPT'
+    $review = Invoke-EncodedChild '& $env:TEST_WRAPPER -Agent claude -TaskType review -Sandbox read-only -ClaudePath $env:TEST_CLAUDE -WorkDir $env:TEST_WORKDIR -OutFile $env:TEST_OUTFILE -Prompt $env:TEST_PROMPT'
     Assert-Equal 0 $review.ExitCode ('Review dispatch failed: ' + ($review.Output -join [Environment]::NewLine))
     Assert-True (Test-Path -LiteralPath $claudeArgsFile -PathType Leaf) 'Review should route to Claude.'
     Assert-True (-not (Test-Path -LiteralPath $agyArgsFile)) 'Review dispatch must not also launch AGY.'
@@ -116,7 +116,8 @@ try {
     Assert-True (-not (Test-Path -LiteralPath $agyArgsFile)) 'Implementation dispatch must not also launch AGY.'
     Assert-True (-not (Test-Path -LiteralPath $claudeArgsFile)) 'Implementation dispatch must not also launch Claude.'
     $codexArguments = [IO.File]::ReadAllLines($codexArgsFile, [Text.Encoding]::UTF8)
-    Assert-Equal 'workspace-write' $codexArguments[2] 'Implementation dispatch must default to workspace-write.'
+    Assert-True ($codexArguments -contains '--approve-for-me') 'Implementation dispatch must use Codex automatic workspace-write approval.'
+    Assert-True (-not ($codexArguments -contains '--sandbox')) 'Codex automatic approval must not be combined with the incompatible --sandbox flag.'
     Assert-Equal 'codex-child-model' $codexArguments[[Array]::IndexOf($codexArguments, '--model') + 1] 'Parent-selected Codex child model was not forwarded.'
     Assert-True ($codexArguments -contains 'model_reasoning_effort="xhigh"') 'Parent-selected Codex child effort was not forwarded.'
     Assert-Equal $prompt $codexArguments[-1] 'Dispatcher changed the Codex prompt.'
@@ -137,7 +138,7 @@ try {
     Assert-True ($scaffoldingArguments -contains '--dangerously-skip-permissions') 'Explicit AGY headless write authorization was not forwarded.'
 
     Clear-BackendEvidence $evidenceFiles
-    $unsafeAgyApproval = Invoke-EncodedChild '& $env:TEST_WRAPPER -Agent agy -AgySkipPermissions -AgyPath $env:TEST_AGY -WorkDir $env:TEST_WORKDIR -Prompt $env:TEST_PROMPT'
+    $unsafeAgyApproval = Invoke-EncodedChild '& $env:TEST_WRAPPER -Agent agy -TaskType analysis -Sandbox read-only -AgySkipPermissions -AgyPath $env:TEST_AGY -WorkDir $env:TEST_WORKDIR -Prompt $env:TEST_PROMPT'
     Assert-True ($unsafeAgyApproval.ExitCode -ne 0) 'AGY permission bypass must be rejected for a read-only dispatch.'
     Assert-True (-not (Test-Path -LiteralPath $agyArgsFile)) 'Unsafe AGY permission validation must happen before launch.'
 

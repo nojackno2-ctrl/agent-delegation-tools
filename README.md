@@ -34,6 +34,7 @@
 - **兩個外部 CLI 承擔主要負載。** `claude` 後端花的是和父代理同一份訂閱額度，只省 context 不省額度，因此自動路由永不選它；只有使用者指名、或 AGY 與 Codex 都耗盡時才會用到。
 - **額度決定路由。** `balance_quota` 預設開啟，派工前讀三個 CLI 的即時額度（10 秒快取），耗盡者自動跳過並轉移。
 - **子代理預設就有寫入權限。** `sandbox` 預設 `workspace-write`，子代理在 `work_dir` 底下直接讀寫檔案，沒有任何核准步驟；純分析才傳 `read-only`。
+- **沙盒透過主機 MCP bridge 使用外部 CLI。** `CodexSandboxOffline` 不直接繼承主機登入憑證；`invoke_*`、`delegate_*` 與 `get_agent_quotas` 由主機側 MCP Server 啟動已登入的 CLI。禁止把 `auth.json`、OAuth token 或其他憑證複製進 workspace／temp 來繞過身分隔離。
 
 MCP Server 會在連線時把這份政策以 `instructions` 送給客戶端，因此任何接上的代理都會依此行為。
 
@@ -129,7 +130,7 @@ npm run build
 ## MCP 提供之標準工具 (Tools) 詳解
 
 ### 1. `get_agent_quotas`（即時配額查詢）
-零 Token 消耗讀取本機各 CLI 的剩餘訂閱額度、使用率與重置時間。
+零模型 Token 消耗讀取本機各 CLI 的剩餘訂閱額度、使用率與重置時間。Codex 與 Claude 讀取 7 天窗口；AGY 透過官方 `/usage` slash command 同時讀取 Gemini、Claude/GPT pools 的 7 天與 5 小時窗口。若 AGY `/usage` 無法提供 7 天窗口，reader 會 fail closed 為 `unavailable`，不會拿 Language Server 的短期 `quotaInfo` 冒充週額度。
 - **參數**：
   - `agent` (string, 可選): `"all"` (預設) | `"codex"` | `"claude"` | `"agy"`
   - `timeout_sec` (number, 可選): 查詢逾時秒數（預設 20）
@@ -163,6 +164,8 @@ npm run build
 
 ### 5. `invoke_codex`（直接呼叫 OpenAI Codex CLI）
 - **參數**：`prompt`, `sandbox` (`"read-only"` | `"workspace-write"`), `model`, `effort`, `work_dir`, `timeout_sec`
+- 寫入模式使用 `--approve-for-me` 自動審核；目前 Codex CLI 由此旗標隱含 `workspace-write`，wrapper 不會再同傳互斥的 `--sandbox workspace-write`。唯讀模式仍顯式傳 `--sandbox read-only`。
+- 主機側 resolver 優先選擇同時包含 `codex.exe` 與匹配 `codex-code-mode-host.exe` 的 Desktop bundle；缺少 companion 的 `~\.codex\.sandbox-bin` 只作 fallback，避免工具呼叫 fail closed 後模型仍誤報完成。
 
 ### 6. `invoke_claude`（直接呼叫 Anthropic Claude Code CLI）
 - **參數**：`prompt`, `mode`, `context` (`"isolated"` 預設省 90% tokens | `"project"`), `session_id`, `resume`, `work_dir`, `timeout_sec`
@@ -216,7 +219,7 @@ npm run lint
 │       │   ├── process.ts
 │       │   └── types.ts
 │       ├── services/
-│       │   ├── quota/                # 原生配額查詢服務 (Codex JSON-RPC, Claude OAuth, AGY RPC, TTL 快取)
+│       │   ├── quota/                # 原生配額查詢服務 (Codex JSON-RPC, Claude OAuth, AGY /usage, TTL 快取)
 │       │   │   ├── agy-quota.ts
 │       │   │   ├── claude-quota.ts
 │       │   │   ├── codex-quota.ts

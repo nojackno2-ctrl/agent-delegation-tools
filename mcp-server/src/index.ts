@@ -93,7 +93,7 @@ async function main() {
         {
           name: 'get_agent_quotas',
           description:
-            'Read live subscription quotas, rate-limit windows, and login state for all three CLIs (Antigravity, Codex, Claude) without starting a model turn. 10-second cache.',
+            'Read live 7-day subscription quotas, shorter rate-limit windows, and login state for all three CLIs (Antigravity, Codex, Claude) without starting a model turn. AGY uses the official /usage slash command. 10-second cache.',
           inputSchema: toToolSchema(getAgentQuotasSchema),
         },
         {

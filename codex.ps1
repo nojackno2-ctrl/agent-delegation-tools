@@ -121,21 +121,22 @@ function Resolve-CodexExecutable {
         $sandboxCodex = Join-Path $env:CODEX_HOME '.sandbox-bin\codex.exe'
         if (Test-Path -LiteralPath $sandboxCodex -PathType Leaf) { return $sandboxCodex }
     }
-    if ($env:USERPROFILE) {
-        $sandboxCodex = Join-Path $env:USERPROFILE '.codex\.sandbox-bin\codex.exe'
-        if (Test-Path -LiteralPath $sandboxCodex -PathType Leaf) { return $sandboxCodex }
-    }
-
-    # Prefer the Desktop-managed CLI. The WindowsApps PATH alias can be discoverable
-    # by Get-Command while its package ACL still rejects direct child-process launch.
+    # Prefer a complete Desktop-managed bundle with the matching Code Mode host.
+    # The user-profile sandbox copy can lag behind or omit that companion binary.
     if ($env:LOCALAPPDATA) {
         $binRoot = Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\bin'
         $desktopCodex = Get-ChildItem -LiteralPath $binRoot -Recurse -Filter 'codex.exe' -File -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path -LiteralPath (Join-Path $_.DirectoryName 'codex-code-mode-host.exe') -PathType Leaf } |
             Sort-Object LastWriteTimeUtc -Descending |
             Select-Object -First 1
         if ($desktopCodex) {
             return $desktopCodex.FullName
         }
+    }
+
+    if ($env:USERPROFILE) {
+        $sandboxCodex = Join-Path $env:USERPROFILE '.codex\.sandbox-bin\codex.exe'
+        if (Test-Path -LiteralPath $sandboxCodex -PathType Leaf) { return $sandboxCodex }
     }
 
     $pathCommand = Get-Command 'codex' -CommandType Application, ExternalScript -ErrorAction SilentlyContinue |
@@ -276,7 +277,16 @@ $effectiveAddDirs = foreach ($directory in @($AddDir)) {
 $resolvedOutFile = if ($OutFile) { Resolve-OutputPath $OutFile } else { $null }
 $resolvedCodex = Resolve-CodexExecutable -RequestedPath $CodexPath
 
-$codexArgs = @('exec', '--sandbox', $Sandbox, '--cd', $effectiveDir, '--color', 'never')
+$codexArgs = @('exec')
+if ($ApproveForMe) {
+    # Current Codex CLI makes --approve-for-me imply workspace-write and
+    # rejects combining it with an explicit --sandbox value.
+    $codexArgs += '--approve-for-me'
+}
+else {
+    $codexArgs += @('--sandbox', $Sandbox)
+}
+$codexArgs += @('--cd', $effectiveDir, '--color', 'never')
 foreach ($directory in $effectiveAddDirs) { $codexArgs += @('--add-dir', $directory) }
 if ($Model)        { $codexArgs += @('--model', $Model) }
 if ($Effort)       { $codexArgs += @('-c', "model_reasoning_effort=`"$Effort`"") }
@@ -284,7 +294,6 @@ if ($resolvedOutFile) { $codexArgs += @('--output-last-message', $resolvedOutFil
 if ($Json)         { $codexArgs += '--json' }
 if ($SkipGitCheck) { $codexArgs += '--skip-git-repo-check' }
 if ($Ephemeral)    { $codexArgs += '--ephemeral' }
-if ($ApproveForMe) { $codexArgs += '--approve-for-me' }
 $codexArgs += $Prompt
 
 $fileName = $resolvedCodex

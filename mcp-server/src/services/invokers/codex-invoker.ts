@@ -5,7 +5,7 @@ import { resolveCodexExecutable } from '../../core/executables.js';
 import { spawnProcess } from '../../core/process.js';
 import { ensureAsciiDirectory } from '../../core/junction.js';
 import { ExecutionResult, EXIT_CODES } from '../../core/types.js';
-import { DEFAULT_MODELS, DEFAULT_SANDBOX, isWriteSandbox } from '../../core/defaults.js';
+import { DEFAULT_MODELS, DEFAULT_SANDBOX } from '../../core/defaults.js';
 
 export interface InvokeCodexOptions {
   prompt: string;
@@ -45,10 +45,9 @@ export async function invokeCodex(options: InvokeCodexOptions): Promise<Executio
     options.outFile ||
     path.join(os.tmpdir(), `mcp-codex-out-${Date.now()}-${Math.random().toString(36).substring(2, 8)}.txt`);
 
+  const useAutomaticApproval = options.approveForMe !== false && sandbox === 'workspace-write';
   const args: string[] = [
     'exec',
-    '--sandbox',
-    sandbox,
     '--cd',
     dirResolution.effectivePath,
     '--color',
@@ -63,10 +62,13 @@ export async function invokeCodex(options: InvokeCodexOptions): Promise<Executio
     `model_reasoning_effort="${effectiveEffort}"`,
   ];
 
-  // Never stop a headless run to ask: approvals inside the sandbox are handled
-  // by Codex itself, and the sandbox is what actually bounds the blast radius.
-  if (options.approveForMe !== false && isWriteSandbox(sandbox)) {
+  // Current Codex CLI makes --approve-for-me imply workspace-write and rejects
+  // combining it with an explicit --sandbox value. Read-only and explicitly
+  // approval-disabled runs keep the direct sandbox flag.
+  if (useAutomaticApproval) {
     args.push('--approve-for-me');
+  } else {
+    args.push('--sandbox', sandbox);
   }
 
   if (options.addDirs) {

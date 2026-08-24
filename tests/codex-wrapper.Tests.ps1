@@ -52,20 +52,31 @@ New-Item -ItemType Directory -Path $testRoot | Out-Null
 try {
     $resolverProfile = Join-Path $testRoot 'profile'
     $resolverCodexHome = Join-Path $testRoot 'codex-home'
+    $resolverLocalAppData = Join-Path $testRoot 'local-app-data'
     $profileSandboxCodex = Join-Path $resolverProfile '.codex\.sandbox-bin\codex.exe'
     $homeSandboxCodex = Join-Path $resolverCodexHome '.sandbox-bin\codex.exe'
-    New-Item -ItemType Directory -Path (Split-Path -Parent $profileSandboxCodex), (Split-Path -Parent $homeSandboxCodex) | Out-Null
+    $desktopBundle = Join-Path $resolverLocalAppData 'OpenAI\Codex\bin\bundle'
+    $desktopCodex = Join-Path $desktopBundle 'codex.exe'
+    $desktopCodeModeHost = Join-Path $desktopBundle 'codex-code-mode-host.exe'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $profileSandboxCodex), (Split-Path -Parent $homeSandboxCodex), $desktopBundle | Out-Null
     New-Item -ItemType File -Path $profileSandboxCodex, $homeSandboxCodex | Out-Null
 
     $savedUserProfile = $env:USERPROFILE
     $savedCodexHome = $env:CODEX_HOME
+    $savedLocalAppData = $env:LOCALAPPDATA
     try {
         $env:USERPROFILE = $resolverProfile
         $env:CODEX_HOME = $resolverCodexHome
+        $env:LOCALAPPDATA = $resolverLocalAppData
         Assert-Equal $homeSandboxCodex (Invoke-ResolverFromScript -ScriptPath $wrapper) 'The worker should prefer the CODEX_HOME sandbox executable.'
         Assert-Equal $homeSandboxCodex (Invoke-ResolverFromScript -ScriptPath $statusScript) 'The status helper should prefer the CODEX_HOME sandbox executable.'
 
         Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue
+        New-Item -ItemType File -Path $desktopCodex, $desktopCodeModeHost | Out-Null
+        Assert-Equal $desktopCodex (Invoke-ResolverFromScript -ScriptPath $wrapper) 'The worker should prefer a complete Desktop Codex bundle.'
+        Assert-Equal $desktopCodex (Invoke-ResolverFromScript -ScriptPath $statusScript) 'The status helper should prefer a complete Desktop Codex bundle.'
+
+        Remove-Item -LiteralPath $desktopCodeModeHost -Force
         Assert-Equal $profileSandboxCodex (Invoke-ResolverFromScript -ScriptPath $wrapper) 'The worker should fall back to the USERPROFILE sandbox executable.'
         Assert-Equal $profileSandboxCodex (Invoke-ResolverFromScript -ScriptPath $statusScript) 'The status helper should fall back to the USERPROFILE sandbox executable.'
     }
@@ -77,6 +88,7 @@ try {
         else {
             $env:CODEX_HOME = $savedCodexHome
         }
+        $env:LOCALAPPDATA = $savedLocalAppData
     }
 
     $aliasRoot = Join-Path $testRoot 'aliases'
@@ -110,10 +122,11 @@ try {
 
     $arguments = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
     Assert-Equal 'exec' $arguments[0] 'The wrapper should invoke codex exec.'
-    Assert-Equal '--sandbox' $arguments[1] 'Sandbox flag is missing.'
-    Assert-Equal 'workspace-write' $arguments[2] 'Sandbox value was not forwarded.'
-    Assert-Equal '--cd' $arguments[3] 'Working-directory flag is missing.'
-    $firstAlias = $arguments[4]
+    Assert-Equal '--approve-for-me' $arguments[1] 'The workspace-write automatic approval flag is missing.'
+    Assert-True (-not ($arguments -contains '--sandbox')) 'Current Codex CLI rejects --approve-for-me combined with --sandbox.'
+    $cdIndex = [Array]::IndexOf($arguments, '--cd')
+    Assert-True ($cdIndex -ge 0) 'Working-directory flag is missing.'
+    $firstAlias = $arguments[$cdIndex + 1]
     Assert-True ($firstAlias -notmatch '[^\x20-\x7E]') 'The primary alias should contain printable ASCII only.'
     Assert-True (Test-Path -LiteralPath $firstAlias -PathType Container) 'The primary alias should exist.'
     $addDirIndex = [Array]::IndexOf($arguments, '--add-dir')

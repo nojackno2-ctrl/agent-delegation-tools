@@ -83,7 +83,9 @@ Use `status.ps1` when provider choice depends on remaining usage or reset time:
 
 - **Codex**: Read from Codex app-server stdio JSON-RPC `account/rateLimits/read` without starting a model turn.
 - **Claude Code**: Read from Anthropic OAuth endpoint `https://api.anthropic.com/api/oauth/usage` using credentials in `~/.claude/.credentials.json` (or `$env:CLAUDE_CONFIG_DIR/.credentials.json`), extracting 5-hour and 7-day usage windows with reset timestamps.
-- **Antigravity (AGY)**: Read from local Language Server `GetCascadeModelConfigData` RPC endpoint with extracted CSRF token and listening port, extracting model quota fractions and grouping into `agy (Gemini)` and `agy (Claude / GPT)` pools with reset timestamps.
+- **Antigravity (AGY)**: Run the official `/usage` slash command through the logged-in host CLI and parse authoritative 7-day plus 5-hour windows for the Gemini and Claude/GPT pools. If `/usage` does not return a weekly window, treat AGY as unavailable for quota-aware routing; the Language Server `quotaInfo` fallback is short-window diagnostics only and must never be labeled as weekly quota.
+
+When the parent runs under `CodexSandboxOffline`, invoke external CLIs and quota readers through the registered host-side `agent-delegation` MCP server. Do not copy `auth.json`, OAuth tokens, CSRF tokens, or provider credential files into the workspace or temp directory to make a direct sandbox child inherit host authentication.
 
 ### Quota-Aware Load Balancing Rule
 
@@ -122,7 +124,7 @@ Use `gemini-3.7-flash` (with `-Effort low|medium|high`, `gemini-3.7-flash-high`,
     'Refactor the database repository in src/db.ts to use connection pooling.'
 ```
 
-Use `-AddDir` for extra workspaces. The wrapper gives non-ASCII paths collision-safe ASCII junctions. It resolves the executable from `-CodexPath` or `CODEX_CLI_PATH`, then `.sandbox-bin\codex.exe` under `CODEX_HOME` or `~/.codex`, then the Desktop-managed install, and only then PATH. `-ApproveForMe` is optional and requires `workspace-write`.
+Use `-AddDir` for extra workspaces. The wrapper gives non-ASCII paths collision-safe ASCII junctions. It resolves the executable from `-CodexPath` or `CODEX_CLI_PATH`, then an explicit `CODEX_HOME`, then the newest Desktop-managed bundle that contains both `codex.exe` and its matching `codex-code-mode-host.exe`, then `~/.codex/.sandbox-bin`, and only then PATH. This keeps host-side MCP workers from selecting an incomplete sandbox-bin copy whose tool calls fail closed. `-ApproveForMe` is optional and requires `workspace-write`; current Codex CLI makes that flag imply the workspace-write sandbox, so the wrapper deliberately omits the incompatible duplicate `--sandbox workspace-write` argument.
 
 ### Claude CLI worker (Implementation / File Modification)
 

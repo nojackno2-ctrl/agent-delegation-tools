@@ -1,7 +1,8 @@
 # Reads provider usage capability without starting a model turn.
 # Codex exposes account/rateLimits/read through app-server.
 # Claude exposes /api/oauth/usage through Anthropic OAuth credentials.
-# Antigravity exposes GetCascadeModelConfigData through language_server RPC.
+# Antigravity CLI /usage exposes weekly and five-hour windows; the Language
+# Server RPC is diagnostic-only because it does not identify the weekly window.
 
 [CmdletBinding()]
 param(
@@ -68,23 +69,45 @@ function Resolve-CodexExecutable {
         $sandboxCodex = Join-Path $env:CODEX_HOME '.sandbox-bin\codex.exe'
         if (Test-Path -LiteralPath $sandboxCodex -PathType Leaf) { return $sandboxCodex }
     }
-    if ($env:USERPROFILE) {
-        $sandboxCodex = Join-Path $env:USERPROFILE '.codex\.sandbox-bin\codex.exe'
-        if (Test-Path -LiteralPath $sandboxCodex -PathType Leaf) { return $sandboxCodex }
-    }
-
     if ($env:LOCALAPPDATA) {
         $binRoot = Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\bin'
         $desktopCodex = Get-ChildItem -LiteralPath $binRoot -Recurse -Filter 'codex.exe' -File -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path -LiteralPath (Join-Path $_.DirectoryName 'codex-code-mode-host.exe') -PathType Leaf } |
             Sort-Object LastWriteTimeUtc -Descending |
             Select-Object -First 1
         if ($desktopCodex) { return $desktopCodex.FullName }
+    }
+
+    if ($env:USERPROFILE) {
+        $sandboxCodex = Join-Path $env:USERPROFILE '.codex\.sandbox-bin\codex.exe'
+        if (Test-Path -LiteralPath $sandboxCodex -PathType Leaf) { return $sandboxCodex }
     }
 
     $pathCommand = Get-Command 'codex' -CommandType Application, ExternalScript -ErrorAction SilentlyContinue |
         Select-Object -First 1
     if ($pathCommand) { return $pathCommand.Source }
     throw 'Codex was not found. Use -CodexPath or CODEX_CLI_PATH.'
+}
+
+function Resolve-AgyExecutable {
+    $explicitPath = $env:AGY_CLI_PATH
+    if ($explicitPath) {
+        $item = Get-Item -LiteralPath $explicitPath -Force -ErrorAction Stop
+        if ($item.PSProvider.Name -ne 'FileSystem' -or $item.PSIsContainer) {
+            throw "AGY_CLI_PATH must identify an executable file: $explicitPath"
+        }
+        return $item.FullName
+    }
+
+    if ($env:LOCALAPPDATA) {
+        $defaultPath = Join-Path $env:LOCALAPPDATA 'agy\bin\agy.exe'
+        if (Test-Path -LiteralPath $defaultPath -PathType Leaf) { return $defaultPath }
+    }
+
+    $pathCommand = Get-Command 'agy' -CommandType Application, ExternalScript -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($pathCommand) { return $pathCommand.Source }
+    throw 'Antigravity CLI (agy) was not found. Configure AGY_CLI_PATH or install Antigravity.'
 }
 
 function Format-WindowsArgument {
@@ -408,6 +431,59 @@ function Get-ClaudeStatus {
     }
 }
 
+function Parse-AgyCliUsageOutput {
+    param(
+        [Parameter(Mandatory = $true)][string]$RawOutput,
+        [Parameter(Mandatory = $true)][DateTimeOffset]$ObservedAt
+    )
+
+    $windows = New-Object 'Collections.Generic.List[object]'
+    foreach ($rawLine in ($RawOutput -split "`r?`n")) {
+        $line = $rawLine.Trim()
+        if ($line -notmatch '^(Gemini Models|Claude and GPT models)\s+(Weekly Limit Remaining|Five Hour Limit Remaining)\s+(\d+(?:\.\d+)?)%\s+(\S+)\s*$') {
+            continue
+        }
+
+        # Copy captures before any further -match operation overwrites the
+        # process-wide automatic $Matches variable in Windows PowerShell 5.1.
+        $poolLabel = $Matches[1]
+        $windowLabel = $Matches[2]
+        $remainingRaw = $Matches[3]
+        $resetIso = $Matches[4]
+        $pool = if ($poolLabel -match '(?i)Gemini') { 'Gemini' } else { 'Claude / GPT' }
+        $isWeekly = $windowLabel -match '(?i)Weekly'
+        $remainingPercent = [int][Math]::Round([Math]::Max(0.0, [Math]::Min(100.0, [double]$remainingRaw)))
+        $resetUnix = try { [DateTimeOffset]::Parse($resetIso).ToUnixTimeSeconds() } catch { $null }
+
+        $windows.Add([ordered]@{
+            name = "agy ($pool) $(if ($isWeekly) { '7d' } else { '5h' })"
+            usedPercent = 100 - $remainingPercent
+            remainingPercent = $remainingPercent
+            windowDurationMins = $(if ($isWeekly) { 10080 } else { 300 })
+            resetsAt = $resetIso
+            resetsAtUnix = $resetUnix
+        })
+    }
+
+    if ($windows.Count -eq 0) {
+        return [ordered]@{
+            agent = 'agy'
+            availability = 'unavailable'
+            observedAt = $ObservedAt.ToString('o')
+            message = 'Antigravity /usage returned no recognizable weekly or five-hour quota windows.'
+            windows = @()
+        }
+    }
+
+    return [ordered]@{
+        agent = 'agy'
+        availability = 'available'
+        observedAt = $ObservedAt.ToString('o')
+        message = 'Read weekly and five-hour quota windows from the Antigravity CLI /usage command.'
+        windows = [object[]]($windows | ForEach-Object { $_ })
+    }
+}
+
 function Parse-AgyUsageResponse {
     param(
         [Parameter(Mandatory = $true)][string]$RawJson,
@@ -503,8 +579,70 @@ function Get-AgyStatus {
 
     $observedAt = [DateTimeOffset]::Now
 
+    if ($env:FAKE_AGY_CLI_USAGE_OUTPUT) {
+        return Parse-AgyCliUsageOutput -RawOutput $env:FAKE_AGY_CLI_USAGE_OUTPUT -ObservedAt $observedAt
+    }
+
     if ($env:FAKE_AGY_STATUS_RESPONSE) {
         return Parse-AgyUsageResponse -RawJson $env:FAKE_AGY_STATUS_RESPONSE -ObservedAt $observedAt
+    }
+
+    $cliFailure = $null
+    $agyProcess = $null
+    try {
+        $agyExecutable = Resolve-AgyExecutable
+        $boundedTimeout = [Math]::Max(1, [Math]::Min($TimeoutSeconds, 120))
+        $agyArgs = @(
+            '-p', '/usage',
+            '--mode', 'plan',
+            '--output-format', 'text',
+            '--print-timeout', "${boundedTimeout}s",
+            '--model', 'gemini-3.7-flash',
+            '--effort', 'low'
+        )
+
+        $startInfo = New-Object Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $agyExecutable
+        $startInfo.Arguments = ($agyArgs | ForEach-Object { Format-WindowsArgument ([string]$_) }) -join ' '
+        $startInfo.WorkingDirectory = $resolvedWorkDir
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        try {
+            $startInfo.StandardOutputEncoding = [Text.Encoding]::UTF8
+            $startInfo.StandardErrorEncoding = [Text.Encoding]::UTF8
+        } catch { }
+
+        $agyProcess = New-Object Diagnostics.Process
+        $agyProcess.StartInfo = $startInfo
+        if (-not $agyProcess.Start()) { throw 'Failed to start Antigravity CLI /usage.' }
+        $stdoutTask = $agyProcess.StandardOutput.ReadToEndAsync()
+        $stderrTask = $agyProcess.StandardError.ReadToEndAsync()
+        if (-not $agyProcess.WaitForExit($boundedTimeout * 1000)) {
+            Stop-ChildProcessTree $agyProcess
+            throw "Antigravity /usage timed out after ${boundedTimeout}s."
+        }
+
+        $stdout = $stdoutTask.Result
+        $stderr = $stderrTask.Result
+        if ($agyProcess.ExitCode -ne 0) {
+            throw "Antigravity /usage exited $($agyProcess.ExitCode): $stderr $stdout"
+        }
+
+        $cliReport = Parse-AgyCliUsageOutput -RawOutput (($stdout, $stderr | Where-Object { $_ }) -join [Environment]::NewLine) -ObservedAt $observedAt
+        $hasWeekly = @($cliReport.windows | Where-Object { $_.windowDurationMins -eq 10080 }).Count -gt 0
+        if ($cliReport.availability -eq 'available' -and $hasWeekly) { return $cliReport }
+        $cliFailure = $cliReport.message
+    }
+    catch {
+        $cliFailure = $_.Exception.Message
+    }
+    finally {
+        if ($agyProcess) {
+            Stop-ChildProcessTree $agyProcess
+            $agyProcess.Dispose()
+        }
     }
 
     try {
@@ -634,7 +772,10 @@ function Get-AgyStatus {
         }
 
         $rawJson = $responseObj | ConvertTo-Json -Depth 10
-        return Parse-AgyUsageResponse -RawJson $rawJson -ObservedAt $observedAt
+        $fallback = Parse-AgyUsageResponse -RawJson $rawJson -ObservedAt $observedAt
+        $fallback.availability = 'unavailable'
+        $fallback.message = "$(if ($cliFailure) { $cliFailure } else { 'Antigravity /usage weekly quota was unavailable.' }) Language Server fallback only exposes the short quota window and is not safe for weekly quota routing."
+        return $fallback
     }
     catch {
         return [ordered]@{

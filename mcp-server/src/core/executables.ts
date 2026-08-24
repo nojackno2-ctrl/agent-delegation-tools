@@ -47,8 +47,6 @@ export function resolveCodexExecutable(requestedPath?: string): string {
     resolved = path.resolve(process.env.CODEX_CLI_PATH);
   } else if (process.env.CODEX_HOME && fs.existsSync(path.join(process.env.CODEX_HOME, '.sandbox-bin', 'codex.exe'))) {
     resolved = path.join(process.env.CODEX_HOME, '.sandbox-bin', 'codex.exe');
-  } else if (process.env.USERPROFILE && fs.existsSync(path.join(process.env.USERPROFILE, '.codex', '.sandbox-bin', 'codex.exe'))) {
-    resolved = path.join(process.env.USERPROFILE, '.codex', '.sandbox-bin', 'codex.exe');
   } else if (process.env.LOCALAPPDATA) {
     const binRoot = path.join(process.env.LOCALAPPDATA, 'OpenAI', 'Codex', 'bin');
     if (fs.existsSync(binRoot)) {
@@ -58,7 +56,8 @@ export function resolveCodexExecutable(requestedPath?: string): string {
         let newestMtime = 0;
         for (const sub of subdirs) {
           const exePath = path.join(binRoot, sub, 'codex.exe');
-          if (fs.existsSync(exePath)) {
+          const codeModeHostPath = path.join(binRoot, sub, 'codex-code-mode-host.exe');
+          if (fs.existsSync(exePath) && fs.existsSync(codeModeHostPath)) {
             const mtime = fs.statSync(exePath).mtimeMs;
             if (mtime > newestMtime) {
               newestMtime = mtime;
@@ -71,6 +70,11 @@ export function resolveCodexExecutable(requestedPath?: string): string {
         // ignore
       }
     }
+  }
+
+  if (!resolved && process.env.USERPROFILE) {
+    const sandboxCodex = path.join(process.env.USERPROFILE, '.codex', '.sandbox-bin', 'codex.exe');
+    if (fs.existsSync(sandboxCodex)) resolved = sandboxCodex;
   }
 
   if (!resolved) {

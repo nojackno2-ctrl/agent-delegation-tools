@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseClaudeUsageResponse } from '../services/quota/claude-quota.js';
-import { parseAgyUsageResponse } from '../services/quota/agy-quota.js';
+import { parseAgyCliUsageOutput, parseAgyUsageResponse } from '../services/quota/agy-quota.js';
 import { evaluateProviderHealth } from '../services/quota/quota-service.js';
 import { AgentQuotaReport } from '../core/types.js';
 
@@ -91,6 +91,40 @@ describe('Quota Response Parsers', () => {
       const res = parseAgyUsageResponse(payload, new Date().toISOString());
       assert.equal(res.agent, 'agy');
       assert.equal(res.availability, 'unavailable');
+    });
+  });
+
+  describe('parseAgyCliUsageOutput', () => {
+    it('should parse weekly and five-hour windows for both AGY model pools', () => {
+      const payload = [
+        'Gemini Models\tWeekly Limit Remaining\t20%\t2026-08-25T23:40:58Z',
+        'Gemini Models\tFive Hour Limit Remaining\t99%\t2026-08-24T14:39:11Z',
+        'Claude and GPT models\tWeekly Limit Remaining\t66%\t2026-08-28T13:56:54Z',
+        'Claude and GPT models\tFive Hour Limit Remaining\t100%\t2026-08-24T17:38:51Z',
+      ].join('\n');
+
+      const res = parseAgyCliUsageOutput(payload, new Date().toISOString());
+
+      assert.equal(res.agent, 'agy');
+      assert.equal(res.availability, 'available');
+      assert.equal(res.windows?.length, 4);
+
+      const geminiWeekly = res.windows?.find((w) => w.name === 'agy (Gemini) 7d');
+      assert.ok(geminiWeekly);
+      assert.equal(geminiWeekly.remainingPercent, 20);
+      assert.equal(geminiWeekly.usedPercent, 80);
+      assert.equal(geminiWeekly.windowDurationMins, 10080);
+
+      const claudeFiveHour = res.windows?.find((w) => w.name === 'agy (Claude / GPT) 5h');
+      assert.ok(claudeFiveHour);
+      assert.equal(claudeFiveHour.remainingPercent, 100);
+      assert.equal(claudeFiveHour.windowDurationMins, 300);
+    });
+
+    it('should reject output without authoritative quota window labels', () => {
+      const res = parseAgyCliUsageOutput('Usage is healthy', new Date().toISOString());
+      assert.equal(res.availability, 'unavailable');
+      assert.equal(res.windows?.length, 0);
     });
   });
 

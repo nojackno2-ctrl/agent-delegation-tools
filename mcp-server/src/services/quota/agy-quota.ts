@@ -3,6 +3,52 @@ import * as path from 'node:path';
 import * as https from 'node:https';
 import { execSync } from 'node:child_process';
 import { AgentQuotaReport, QuotaWindow } from '../../core/types.js';
+import { resolveAgyExecutable } from '../../core/executables.js';
+import { spawnProcess } from '../../core/process.js';
+
+const AGY_USAGE_WINDOW_PATTERN = /^(Gemini Models|Claude and GPT models)\s+(Weekly Limit Remaining|Five Hour Limit Remaining)\s+(\d+(?:\.\d+)?)%\s+(\S+)\s*$/i;
+
+export function parseAgyCliUsageOutput(rawOutput: string, observedAt: string): AgentQuotaReport {
+  const windows: QuotaWindow[] = [];
+
+  for (const rawLine of rawOutput.split(/\r?\n/)) {
+    const match = rawLine.trim().match(AGY_USAGE_WINDOW_PATTERN);
+    if (!match) continue;
+
+    const pool = /gemini/i.test(match[1]) ? 'Gemini' : 'Claude / GPT';
+    const isWeekly = /weekly/i.test(match[2]);
+    const remainingPercent = Math.max(0, Math.min(100, Math.round(Number(match[3]))));
+    const resetsAt = match[4];
+    const parsedReset = Date.parse(resetsAt);
+
+    windows.push({
+      name: `agy (${pool}) ${isWeekly ? '7d' : '5h'}`,
+      usedPercent: 100 - remainingPercent,
+      remainingPercent,
+      windowDurationMins: isWeekly ? 10080 : 300,
+      resetsAt,
+      resetsAtUnix: Number.isNaN(parsedReset) ? null : Math.floor(parsedReset / 1000),
+    });
+  }
+
+  if (windows.length === 0) {
+    return {
+      agent: 'agy',
+      availability: 'unavailable',
+      observedAt,
+      message: 'Antigravity /usage returned no recognizable weekly or five-hour quota windows.',
+      windows: [],
+    };
+  }
+
+  return {
+    agent: 'agy',
+    availability: 'available',
+    observedAt,
+    message: 'Read weekly and five-hour quota windows from the Antigravity CLI /usage command.',
+    windows,
+  };
+}
 
 export function parseAgyUsageResponse(rawJson: string, observedAt: string): AgentQuotaReport {
   let json: any;
@@ -242,8 +288,52 @@ export async function getAgyQuota(options?: { timeoutSec?: number }): Promise<Ag
   const observedAt = new Date().toISOString();
   const timeoutSec = options?.timeoutSec || 15;
 
+  if (process.env.FAKE_AGY_CLI_USAGE_OUTPUT) {
+    return parseAgyCliUsageOutput(process.env.FAKE_AGY_CLI_USAGE_OUTPUT, observedAt);
+  }
+
   if (process.env.FAKE_AGY_STATUS_RESPONSE) {
     return parseAgyUsageResponse(process.env.FAKE_AGY_STATUS_RESPONSE, observedAt);
+  }
+
+  let cliFailure = '';
+  try {
+    const executable = resolveAgyExecutable();
+    const boundedTimeoutSec = Math.max(1, Math.min(timeoutSec, 120));
+    const cliResult = await spawnProcess({
+      executable,
+      args: [
+        '-p',
+        '/usage',
+        '--mode',
+        'plan',
+        '--output-format',
+        'text',
+        '--print-timeout',
+        `${boundedTimeoutSec}s`,
+        '--model',
+        'gemini-3.7-flash',
+        '--effort',
+        'low',
+      ],
+      timeoutMs: boundedTimeoutSec * 1000,
+    });
+
+    if (cliResult.exitCode === 0) {
+      const cliReport = parseAgyCliUsageOutput(
+        [cliResult.stdout, cliResult.stderr].filter(Boolean).join('\n'),
+        observedAt
+      );
+      const hasWeeklyWindow = cliReport.windows?.some((window) => window.windowDurationMins === 10080);
+      if (cliReport.availability === 'available' && hasWeeklyWindow) {
+        return cliReport;
+      }
+      cliFailure = cliReport.message;
+    } else {
+      cliFailure = `Antigravity /usage exited ${cliResult.exitCode}: ${cliResult.stderr || cliResult.stdout}`.trim();
+    }
+  } catch (err: any) {
+    cliFailure = `Antigravity /usage could not be started: ${err?.message || String(err)}`;
   }
 
   // 1. Try cached active connection if available (<2ms response)
@@ -251,7 +341,12 @@ export async function getAgyQuota(options?: { timeoutSec?: number }): Promise<Ag
     const fastData = await tryPostRpc(activeAgyConnection.port, activeAgyConnection.csrfToken, 1500);
     if (fastData) {
       activeAgyConnection.lastVerified = Date.now();
-      return parseAgyUsageResponse(fastData, observedAt);
+      const fallback = parseAgyUsageResponse(fastData, observedAt);
+      return {
+        ...fallback,
+        availability: 'unavailable',
+        message: `${cliFailure || 'Antigravity /usage weekly quota was unavailable.'} Language Server fallback only exposes the short quota window and is not safe for weekly quota routing.`,
+      };
     }
     // Cached connection failed; reset and proceed to discovery
     activeAgyConnection = null;
@@ -263,7 +358,7 @@ export async function getAgyQuota(options?: { timeoutSec?: number }): Promise<Ag
       agent: 'agy',
       availability: 'unavailable',
       observedAt,
-      message: 'Antigravity language_server is not active or listening port/CSRF token could not be detected.',
+      message: `${cliFailure || 'Antigravity /usage weekly quota was unavailable.'} Antigravity language_server is not active or its connection details could not be detected.`,
       windows: [],
     };
   }
@@ -278,7 +373,12 @@ export async function getAgyQuota(options?: { timeoutSec?: number }): Promise<Ag
         csrfToken: details.csrfToken,
         lastVerified: Date.now(),
       };
-      return parseAgyUsageResponse(rawData, observedAt);
+      const fallback = parseAgyUsageResponse(rawData, observedAt);
+      return {
+        ...fallback,
+        availability: 'unavailable',
+        message: `${cliFailure || 'Antigravity /usage weekly quota was unavailable.'} Language Server fallback only exposes the short quota window and is not safe for weekly quota routing.`,
+      };
     }
   }
 
@@ -286,7 +386,7 @@ export async function getAgyQuota(options?: { timeoutSec?: number }): Promise<Ag
     agent: 'agy',
     availability: 'unavailable',
     observedAt,
-    message: 'Failed to connect to Antigravity Language Server RPC endpoint across detected ports.',
+    message: `${cliFailure || 'Antigravity /usage weekly quota was unavailable.'} Failed to connect to the Antigravity Language Server fallback.`,
     windows: [],
   };
 }
