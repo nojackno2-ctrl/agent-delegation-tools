@@ -117,16 +117,26 @@ function Resolve-CodexExecutable {
         return $item.FullName
     }
 
-    # Prefer the Desktop-managed CLI. The WindowsApps PATH alias can be discoverable
-    # by Get-Command while its package ACL still rejects direct child-process launch.
+    if ($env:CODEX_HOME) {
+        $sandboxCodex = Join-Path $env:CODEX_HOME '.sandbox-bin\codex.exe'
+        if (Test-Path -LiteralPath $sandboxCodex -PathType Leaf) { return $sandboxCodex }
+    }
+    # Prefer a complete Desktop-managed bundle with the matching Code Mode host.
+    # The user-profile sandbox copy can lag behind or omit that companion binary.
     if ($env:LOCALAPPDATA) {
         $binRoot = Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\bin'
         $desktopCodex = Get-ChildItem -LiteralPath $binRoot -Recurse -Filter 'codex.exe' -File -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path -LiteralPath (Join-Path $_.DirectoryName 'codex-code-mode-host.exe') -PathType Leaf } |
             Sort-Object LastWriteTimeUtc -Descending |
             Select-Object -First 1
         if ($desktopCodex) {
             return $desktopCodex.FullName
         }
+    }
+
+    if ($env:USERPROFILE) {
+        $sandboxCodex = Join-Path $env:USERPROFILE '.codex\.sandbox-bin\codex.exe'
+        if (Test-Path -LiteralPath $sandboxCodex -PathType Leaf) { return $sandboxCodex }
     }
 
     $pathCommand = Get-Command 'codex' -CommandType Application, ExternalScript -ErrorAction SilentlyContinue |
@@ -267,7 +277,16 @@ $effectiveAddDirs = foreach ($directory in @($AddDir)) {
 $resolvedOutFile = if ($OutFile) { Resolve-OutputPath $OutFile } else { $null }
 $resolvedCodex = Resolve-CodexExecutable -RequestedPath $CodexPath
 
-$codexArgs = @('exec', '--sandbox', $Sandbox, '--cd', $effectiveDir, '--color', 'never')
+$codexArgs = @('exec')
+if ($ApproveForMe) {
+    # Current Codex CLI makes --approve-for-me imply workspace-write and
+    # rejects combining it with an explicit --sandbox value.
+    $codexArgs += '--approve-for-me'
+}
+else {
+    $codexArgs += @('--sandbox', $Sandbox)
+}
+$codexArgs += @('--cd', $effectiveDir, '--color', 'never')
 foreach ($directory in $effectiveAddDirs) { $codexArgs += @('--add-dir', $directory) }
 if ($Model)        { $codexArgs += @('--model', $Model) }
 if ($Effort)       { $codexArgs += @('-c', "model_reasoning_effort=`"$Effort`"") }
@@ -275,7 +294,6 @@ if ($resolvedOutFile) { $codexArgs += @('--output-last-message', $resolvedOutFil
 if ($Json)         { $codexArgs += '--json' }
 if ($SkipGitCheck) { $codexArgs += '--skip-git-repo-check' }
 if ($Ephemeral)    { $codexArgs += '--ephemeral' }
-if ($ApproveForMe) { $codexArgs += '--approve-for-me' }
 $codexArgs += $Prompt
 
 $fileName = $resolvedCodex
@@ -337,6 +355,20 @@ try {
 finally {
     $env:AGENT_DELEGATION_DEPTH = $previousDepth
     if ($process) { $process.Dispose() }
+}
+
+$isAuthFailure = ($exitCode -ne 0) -and ($stdout + "`n" + $stderr -match '(?i)(Authentication required|Please sign in|not logged in|codex login|sign in to your account|unauthorized)')
+if ($isAuthFailure) {
+    $exitCode = 78
+    $loginGuidance = "Codex CLI is not logged in. Run 'codex login' interactively, complete sign-in, then retry the delegated task."
+    if ($stdout -and -not $stdout.EndsWith([Environment]::NewLine)) { $stdout += [Environment]::NewLine }
+    $stdout += $loginGuidance
+    if ($stderr -and -not $stderr.Contains("codex login")) {
+        $stderr += [Environment]::NewLine + $loginGuidance
+    }
+    elseif (-not $stderr) {
+        $stderr = $loginGuidance
+    }
 }
 
 if ($stdout) { [Console]::Out.Write($stdout) }

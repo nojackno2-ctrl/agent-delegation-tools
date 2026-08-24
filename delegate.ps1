@@ -15,11 +15,11 @@ param(
     [string[]]$FallbackAgent = @(),
 
     [ValidateSet('analysis', 'implementation', 'scaffolding', 'review')]
-    [string]$TaskType = 'analysis',
+    [string]$TaskType = 'implementation',
 
-    # The dispatcher is read-only unless writing is selected explicitly.
+    # Delegated children are write-capable by default; pass read-only for pure analysis.
     [ValidateSet('read-only', 'workspace-write', 'danger-full-access')]
-    [string]$Sandbox = 'read-only',
+    [string]$Sandbox = 'workspace-write',
 
     # Backward-compatible primary-child settings. Provider-specific values below win.
     [string]$Model,
@@ -74,6 +74,9 @@ param(
     # AGY headless write runs otherwise stop at command-tool approval prompts.
     [switch]$AgySkipPermissions,
 
+    # Automatically check live quota across CLIs and rebalance to a healthy agent if primary is exhausted.
+    [switch]$BalanceQuota,
+
     [string]$AgyPath,
 
     [string]$CodexPath,
@@ -85,6 +88,99 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 $EXIT_QUOTA_EXHAUSTED = 75
+$script:scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
+if (-not $script:scriptDirectory) { $script:scriptDirectory = (Get-Location).ProviderPath }
+
+function Format-WindowsArgument {
+    param([AllowEmptyString()][string]$Value)
+
+    if ($Value -eq '') { return '""' }
+    if ($Value -notmatch '[\s"]') { return $Value }
+    $escaped = $Value -replace '(\\*)"', '$1$1\"'
+    $escaped = $escaped -replace '(\\+)$', '$1$1'
+    return '"' + $escaped + '"'
+}
+
+function Get-DynamicQuotaHealth {
+    param([string]$ScriptDir, [string]$CodexExecutable, [string]$TargetWorkDir)
+
+    if ($env:FAKE_STATUS_RESPONSE) {
+        try {
+            $records = $env:FAKE_STATUS_RESPONSE | ConvertFrom-Json
+            $health = @{}
+            foreach ($r in $records) {
+                $agentName = [string]$r.agent
+                $avail = ($r.availability -eq 'available')
+                $maxRemaining = 0
+                if ($avail -and $r.windows) {
+                    foreach ($w in $r.windows) {
+                        if ($null -ne $w.remainingPercent) {
+                            $pct = [int]$w.remainingPercent
+                            if ($pct -gt $maxRemaining) { $maxRemaining = $pct }
+                        }
+                    }
+                }
+                $health[$agentName] = [pscustomobject]@{
+                    Available = $avail
+                    MaxRemainingPercent = $maxRemaining
+                }
+            }
+            return $health
+        }
+        catch { return $null }
+    }
+
+    $statusScript = if ($env:TEST_STATUS) { $env:TEST_STATUS } else { Join-Path $ScriptDir 'status.ps1' }
+    if (-not (Test-Path -LiteralPath $statusScript -PathType Leaf)) { return $null }
+
+    try {
+        $statusArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $statusScript, '-Agent', 'all', '-Json', '-TimeoutSec', '5')
+        if ($CodexExecutable) { $statusArgs += @('-CodexPath', $CodexExecutable) }
+        if ($TargetWorkDir) { $statusArgs += @('-WorkDir', $TargetWorkDir) }
+
+        $pinfo = New-Object Diagnostics.ProcessStartInfo
+        $pinfo.FileName = Join-Path $PSHOME 'powershell.exe'
+        $pinfo.Arguments = ($statusArgs | ForEach-Object { Format-WindowsArgument $_ }) -join ' '
+        $pinfo.WorkingDirectory = if ($TargetWorkDir) { $TargetWorkDir } else { (Get-Location).ProviderPath }
+        $pinfo.UseShellExecute = $false
+        $pinfo.CreateNoWindow = $true
+        $pinfo.RedirectStandardOutput = $true
+        $pinfo.RedirectStandardError = $true
+        try { $pinfo.StandardOutputEncoding = [Text.Encoding]::UTF8 } catch { }
+
+        $proc = [Diagnostics.Process]::Start($pinfo)
+        if (-not $proc.WaitForExit(7000)) {
+            try { $proc.Kill() } catch { }
+            return $null
+        }
+        $out = $proc.StandardOutput.ReadToEnd()
+        if ($proc.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($out)) { return $null }
+
+        $records = $out | ConvertFrom-Json
+        $health = @{}
+        foreach ($r in $records) {
+            $agentName = [string]$r.agent
+            $avail = ($r.availability -eq 'available')
+            $maxRemaining = 0
+            if ($avail -and $r.windows) {
+                foreach ($w in $r.windows) {
+                    if ($null -ne $w.remainingPercent) {
+                        $pct = [int]$w.remainingPercent
+                        if ($pct -gt $maxRemaining) { $maxRemaining = $pct }
+                    }
+                }
+            }
+            $health[$agentName] = [pscustomobject]@{
+                Available = $avail
+                MaxRemainingPercent = $maxRemaining
+            }
+        }
+        return $health
+    }
+    catch {
+        return $null
+    }
+}
 
 function Resolve-OutputPath {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -103,6 +199,18 @@ function Resolve-OutputPath {
     return $fullPath
 }
 
+# Fallback child settings when the parent supplies none. Explicit parameters win.
+$script:DefaultBackendModel = @{
+    agy    = 'gemini-3.7-flash'
+    codex  = 'gpt-5.6-luna'
+    claude = 'claude-sonnet-5'
+}
+$script:DefaultBackendEffort = @{
+    agy    = 'high'
+    codex  = 'high'
+    claude = 'high'
+}
+
 function Get-BackendModel {
     param([Parameter(Mandatory = $true)][string]$Backend)
 
@@ -112,8 +220,8 @@ function Get-BackendModel {
         'claude' { $ClaudeModel }
     }
     if ($specific) { return $specific }
-    if ($Backend -eq $script:primaryAgent) { return $Model }
-    return $null
+    if ($Backend -eq $script:primaryAgent -and $Model) { return $Model }
+    return $script:DefaultBackendModel[$Backend]
 }
 
 function Get-BackendEffort {
@@ -125,8 +233,8 @@ function Get-BackendEffort {
         'claude' { $ClaudeEffort }
     }
     if ($specific) { return $specific }
-    if ($Backend -eq $script:primaryAgent) { return $Effort }
-    return $null
+    if ($Backend -eq $script:primaryAgent -and $Effort) { return $Effort }
+    return $script:DefaultBackendEffort[$Backend]
 }
 
 function New-ContinuationPrompt {
@@ -291,12 +399,14 @@ if ($depth -ge 1) {
     throw "Refusing recursive delegation: AGENT_DELEGATION_DEPTH=$depth."
 }
 
+# Auto-routing only picks an external CLI: a Claude child spends the same
+# subscription quota as the parent, so it must be requested by name.
 $script:primaryAgent = $Agent
 if ($script:primaryAgent -eq 'auto') {
     $script:primaryAgent = switch ($TaskType) {
         'analysis'       { 'agy' }
         'scaffolding'    { 'agy' }
-        'review'         { 'claude' }
+        'review'         { 'codex' }
         'implementation' { 'codex' }
     }
 }
@@ -313,9 +423,61 @@ foreach ($fallbackValue in @($FallbackAgent)) {
     }
 }
 
+if ($BalanceQuota) {
+    $quotaHealth = Get-DynamicQuotaHealth -ScriptDir $script:scriptDirectory -CodexExecutable $CodexPath -TargetWorkDir $WorkDir
+    if ($quotaHealth) {
+        # External CLIs are considered first; the Claude CLI joins only when
+        # neither of them has headroom, since it shares the parent's quota.
+        $externalCandidates = @('agy', 'codex')
+        $externalsUsable = @($externalCandidates | Where-Object {
+            $ch = $quotaHealth[$_]
+            $ch -and $ch.Available -and $ch.MaxRemainingPercent -gt 10
+        })
+        $rebalanceCandidates = if ($externalsUsable.Count -gt 0) { $externalCandidates } else { @('agy', 'codex', 'claude') }
+
+        $primaryHealth = $quotaHealth[$script:primaryAgent]
+        $isDepleted = (-not $primaryHealth -or -not $primaryHealth.Available -or $primaryHealth.MaxRemainingPercent -le 10)
+        if ($isDepleted) {
+            $bestCandidate = $null
+            $bestPct = -1
+            foreach ($candidate in $rebalanceCandidates) {
+                $ch = $quotaHealth[$candidate]
+                if ($ch -and $ch.Available -and $ch.MaxRemainingPercent -gt $bestPct) {
+                    $bestPct = $ch.MaxRemainingPercent
+                    $bestCandidate = $candidate
+                }
+            }
+            if ($bestCandidate -and $bestPct -gt 10 -and $bestCandidate -ne $script:primaryAgent) {
+                $origAgent = $script:primaryAgent
+                $origPct = if ($primaryHealth) { $primaryHealth.MaxRemainingPercent } else { 0 }
+                Write-Host "[delegate.ps1] Quota-aware rebalance: '$origAgent' is low/unavailable ($origPct% remaining), switching primary to '$bestCandidate' ($bestPct% remaining)." -ForegroundColor Yellow
+                $script:primaryAgent = $bestCandidate
+            }
+        }
+
+        if ($normalizedFallbackAgents.Count -eq 0) {
+            foreach ($cand in $rebalanceCandidates) {
+                if ($cand -ne $script:primaryAgent) {
+                    $ch = $quotaHealth[$cand]
+                    if ($ch -and $ch.Available -and $ch.MaxRemainingPercent -gt 10) {
+                        $normalizedFallbackAgents += $cand
+                    }
+                }
+            }
+        }
+    }
+}
+
 $candidateAgents = New-Object 'Collections.Generic.List[string]'
 foreach ($candidate in @($script:primaryAgent) + @($normalizedFallbackAgents)) {
     if (-not $candidateAgents.Contains($candidate)) { $candidateAgents.Add($candidate) }
+}
+
+# A headless child cannot answer an approval prompt, so a write-capable run must
+# never be able to raise one. The sandbox and work dir are the real boundary.
+if ($Sandbox -eq 'workspace-write') {
+    if ($candidateAgents.Contains('agy')) { $AgySkipPermissions = $true }
+    $ApproveForMe = $true
 }
 
 if ($Sandbox -eq 'danger-full-access' -and $candidateAgents.Contains('agy')) {
@@ -330,7 +492,6 @@ if ($AgySkipPermissions -and $Sandbox -ne 'workspace-write') {
 
 $resolvedOutFile = if ($OutFile) { Resolve-OutputPath $OutFile } else { $null }
 $resolvedRawFile = if ($RawFile) { Resolve-OutputPath $RawFile } else { $null }
-$script:scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $safeTempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $attemptRoot = [IO.Path]::GetFullPath((Join-Path $safeTempRoot ("agent-delegation-{0}" -f [Guid]::NewGuid().ToString('N'))))
 if (-not $attemptRoot.StartsWith($safeTempRoot, [StringComparison]::OrdinalIgnoreCase)) {

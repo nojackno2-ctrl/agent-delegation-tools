@@ -88,7 +88,7 @@ try {
     $env:FAKE_CODEX_LOGGED_IN = 'true'
 
     Clear-BackendEvidence $evidenceFiles
-    $analysis = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_AGY -WorkDir $env:TEST_WORKDIR -AddDir $env:TEST_ADDDIR -OutFile $env:TEST_OUTFILE -Prompt $env:TEST_PROMPT'
+    $analysis = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType analysis -Sandbox read-only -AgyPath $env:TEST_AGY -WorkDir $env:TEST_WORKDIR -AddDir $env:TEST_ADDDIR -OutFile $env:TEST_OUTFILE -Prompt $env:TEST_PROMPT'
     Assert-Equal 0 $analysis.ExitCode ('Default analysis dispatch failed: ' + ($analysis.Output -join [Environment]::NewLine))
     Assert-True (Test-Path -LiteralPath $agyArgsFile -PathType Leaf) 'Default analysis should route to AGY.'
     Assert-True (-not (Test-Path -LiteralPath $claudeArgsFile)) 'Analysis dispatch must not also launch Claude.'
@@ -100,7 +100,7 @@ try {
 
     Clear-BackendEvidence $evidenceFiles
     $env:FAKE_CLAUDE_OUTPUT = 'review result'
-    $review = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType review -ClaudePath $env:TEST_CLAUDE -WorkDir $env:TEST_WORKDIR -OutFile $env:TEST_OUTFILE -Prompt $env:TEST_PROMPT'
+    $review = Invoke-EncodedChild '& $env:TEST_WRAPPER -Agent claude -TaskType review -Sandbox read-only -ClaudePath $env:TEST_CLAUDE -WorkDir $env:TEST_WORKDIR -OutFile $env:TEST_OUTFILE -Prompt $env:TEST_PROMPT'
     Assert-Equal 0 $review.ExitCode ('Review dispatch failed: ' + ($review.Output -join [Environment]::NewLine))
     Assert-True (Test-Path -LiteralPath $claudeArgsFile -PathType Leaf) 'Review should route to Claude.'
     Assert-True (-not (Test-Path -LiteralPath $agyArgsFile)) 'Review dispatch must not also launch AGY.'
@@ -110,19 +110,20 @@ try {
     Assert-Equal $prompt ([IO.File]::ReadAllText($claudePromptFile, [Text.Encoding]::UTF8)) 'Dispatcher changed the Claude stdin prompt.'
 
     Clear-BackendEvidence $evidenceFiles
-    $implementation = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType implementation -CodexModel codex-child-model -CodexEffort xhigh -CodexPath $env:TEST_CODEX -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
+    $implementation = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType implementation -Sandbox workspace-write -CodexModel codex-child-model -CodexEffort xhigh -CodexPath $env:TEST_CODEX -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
     Assert-Equal 0 $implementation.ExitCode ('Implementation dispatch failed: ' + ($implementation.Output -join [Environment]::NewLine))
     Assert-True (Test-Path -LiteralPath $codexArgsFile -PathType Leaf) 'Implementation should route to Codex.'
     Assert-True (-not (Test-Path -LiteralPath $agyArgsFile)) 'Implementation dispatch must not also launch AGY.'
     Assert-True (-not (Test-Path -LiteralPath $claudeArgsFile)) 'Implementation dispatch must not also launch Claude.'
     $codexArguments = [IO.File]::ReadAllLines($codexArgsFile, [Text.Encoding]::UTF8)
-    Assert-Equal 'workspace-write' $codexArguments[2] 'Implementation dispatch must default to workspace-write.'
+    Assert-True ($codexArguments -contains '--approve-for-me') 'Implementation dispatch must use Codex automatic workspace-write approval.'
+    Assert-True (-not ($codexArguments -contains '--sandbox')) 'Codex automatic approval must not be combined with the incompatible --sandbox flag.'
     Assert-Equal 'codex-child-model' $codexArguments[[Array]::IndexOf($codexArguments, '--model') + 1] 'Parent-selected Codex child model was not forwarded.'
     Assert-True ($codexArguments -contains 'model_reasoning_effort="xhigh"') 'Parent-selected Codex child effort was not forwarded.'
     Assert-Equal $prompt $codexArguments[-1] 'Dispatcher changed the Codex prompt.'
 
     Clear-BackendEvidence $evidenceFiles
-    $userConfigured = Invoke-EncodedChild '& $env:TEST_WRAPPER -Agent auto -TaskType implementation -Model user-selected-model -Effort ultra -CodexPath $env:TEST_CODEX -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
+    $userConfigured = Invoke-EncodedChild '& $env:TEST_WRAPPER -Agent auto -TaskType implementation -Sandbox workspace-write -Model user-selected-model -Effort ultra -CodexPath $env:TEST_CODEX -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
     Assert-Equal 0 $userConfigured.ExitCode ('User-configured automatic dispatch failed: ' + ($userConfigured.Output -join [Environment]::NewLine))
     Assert-True (Test-Path -LiteralPath $codexArgsFile -PathType Leaf) 'Automatic implementation routing should select Codex for user-configured child settings.'
     $userConfiguredArguments = [IO.File]::ReadAllLines($codexArgsFile, [Text.Encoding]::UTF8)
@@ -130,14 +131,14 @@ try {
     Assert-True ($userConfiguredArguments -contains 'model_reasoning_effort="ultra"') 'The explicit primary-child effort was not preserved during automatic routing.'
 
     Clear-BackendEvidence $evidenceFiles
-    $scaffolding = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType scaffolding -AgySkipPermissions -AgyPath $env:TEST_AGY -WorkDir $env:TEST_WORKDIR -Prompt $env:TEST_PROMPT'
+    $scaffolding = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType scaffolding -Sandbox workspace-write -AgySkipPermissions -AgyPath $env:TEST_AGY -WorkDir $env:TEST_WORKDIR -Prompt $env:TEST_PROMPT'
     Assert-Equal 0 $scaffolding.ExitCode ('Scaffolding dispatch failed: ' + ($scaffolding.Output -join [Environment]::NewLine))
     $scaffoldingArguments = Read-RecordedArguments $agyArgsFile
     Assert-Equal 'accept-edits' $scaffoldingArguments[[Array]::IndexOf($scaffoldingArguments, '--mode') + 1] 'Explicit scaffolding write mode was not forwarded to AGY.'
     Assert-True ($scaffoldingArguments -contains '--dangerously-skip-permissions') 'Explicit AGY headless write authorization was not forwarded.'
 
     Clear-BackendEvidence $evidenceFiles
-    $unsafeAgyApproval = Invoke-EncodedChild '& $env:TEST_WRAPPER -Agent agy -AgySkipPermissions -AgyPath $env:TEST_AGY -WorkDir $env:TEST_WORKDIR -Prompt $env:TEST_PROMPT'
+    $unsafeAgyApproval = Invoke-EncodedChild '& $env:TEST_WRAPPER -Agent agy -TaskType analysis -Sandbox read-only -AgySkipPermissions -AgyPath $env:TEST_AGY -WorkDir $env:TEST_WORKDIR -Prompt $env:TEST_PROMPT'
     Assert-True ($unsafeAgyApproval.ExitCode -ne 0) 'AGY permission bypass must be rejected for a read-only dispatch.'
     Assert-True (-not (Test-Path -LiteralPath $agyArgsFile)) 'Unsafe AGY permission validation must happen before launch.'
 
@@ -157,7 +158,7 @@ try {
 
     Clear-BackendEvidence $evidenceFiles
     $env:FAKE_CODEX_LOGGED_IN = 'false'
-    $loggedOut = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType implementation -FallbackAgent claude -CodexPath $env:TEST_CODEX -ClaudePath $env:TEST_CLAUDE -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
+    $loggedOut = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType implementation -Sandbox workspace-write -FallbackAgent claude -CodexPath $env:TEST_CODEX -ClaudePath $env:TEST_CLAUDE -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
     Assert-Equal 78 $loggedOut.ExitCode 'Dispatcher must preserve the login-required exit code.'
     Assert-True (($loggedOut.Output -join [Environment]::NewLine).Contains('codex login')) 'Dispatcher must surface the Codex login instruction.'
     Assert-True (-not (Test-Path -LiteralPath $codexArgsFile)) 'A logged-out Codex child task must not launch.'
@@ -241,6 +242,32 @@ try {
     $env:FAKE_CLAUDE_OUTPUT = 'review result'
 
     Clear-BackendEvidence $evidenceFiles
+    $env:FAKE_STATUS_RESPONSE = @'
+[
+  { "agent": "codex", "availability": "available", "windows": [{ "name": "codex", "remainingPercent": 0 }] },
+  { "agent": "agy", "availability": "available", "windows": [{ "name": "agy (Gemini)", "remainingPercent": 85 }] },
+  { "agent": "claude", "availability": "unavailable", "windows": [] }
+]
+'@
+    $rebalanced = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType implementation -BalanceQuota -AgyPath $env:TEST_AGY -ClaudePath $env:TEST_CLAUDE -CodexPath $env:TEST_CODEX -WorkDir $env:TEST_WORKDIR -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $rebalanced.ExitCode ('BalanceQuota rebalance failed: ' + ($rebalanced.Output -join [Environment]::NewLine))
+    Assert-True (Test-Path -LiteralPath $agyArgsFile -PathType Leaf) 'BalanceQuota should rebalance depleted Codex to healthy AGY.'
+    Assert-True (-not (Test-Path -LiteralPath $codexArgsFile)) 'BalanceQuota must not launch depleted Codex.'
+
+    Clear-BackendEvidence $evidenceFiles
+    $env:FAKE_STATUS_RESPONSE = @'
+[
+  { "agent": "codex", "availability": "available", "windows": [{ "name": "codex", "remainingPercent": 90 }] },
+  { "agent": "agy", "availability": "available", "windows": [{ "name": "agy (Gemini)", "remainingPercent": 85 }] },
+  { "agent": "claude", "availability": "available", "windows": [{ "name": "claude (5h)", "remainingPercent": 95 }] }
+]
+'@
+    $healthyImplementation = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType implementation -BalanceQuota -AgyPath $env:TEST_AGY -ClaudePath $env:TEST_CLAUDE -CodexPath $env:TEST_CODEX -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $healthyImplementation.ExitCode ('Healthy BalanceQuota dispatch failed: ' + ($healthyImplementation.Output -join [Environment]::NewLine))
+    Assert-True (Test-Path -LiteralPath $codexArgsFile -PathType Leaf) 'Healthy BalanceQuota should route implementation to Codex.'
+    Remove-Item Env:FAKE_STATUS_RESPONSE
+
+    Clear-BackendEvidence $evidenceFiles
     $env:AGENT_DELEGATION_DEPTH = '1'
     $env:TEST_WRAPPER = $wrapper
     $recursive = Invoke-EncodedChild '& $env:TEST_WRAPPER -Agent agy -AgyPath $env:TEST_AGY -WorkDir $env:TEST_WORKDIR -Prompt $env:TEST_PROMPT'
@@ -251,7 +278,7 @@ try {
     'delegate-wrapper.Tests.ps1: all tests passed.'
 }
 finally {
-    foreach ($name in @('TEST_WRAPPER','TEST_AGY','TEST_CLAUDE','TEST_CODEX','TEST_WORKDIR','TEST_ADDDIR','TEST_OUTFILE','TEST_PROMPT','FAKE_AGY_ARGS_FILE','FAKE_AGY_EXIT_CODE','FAKE_AGY_OUTPUT','FAKE_AGY_SLEEP_MS','FAKE_CLAUDE_ARGS_FILE','FAKE_CLAUDE_PROMPT_FILE','FAKE_CLAUDE_CWD_FILE','FAKE_CLAUDE_DEPTH_FILE','FAKE_CLAUDE_EXIT_CODE','FAKE_CLAUDE_OUTPUT','FAKE_CLAUDE_ERROR','FAKE_CLAUDE_SLEEP_MS','FAKE_CLAUDE_LOGGED_IN','FAKE_CODEX_ARGS_FILE','FAKE_CODEX_EXIT_CODE','FAKE_CODEX_OUTPUT','FAKE_CODEX_ERROR','FAKE_CODEX_SLEEP_MS','FAKE_CODEX_LOGGED_IN','AGENT_DELEGATION_DEPTH')) {
+    foreach ($name in @('TEST_WRAPPER','TEST_AGY','TEST_CLAUDE','TEST_CODEX','TEST_WORKDIR','TEST_ADDDIR','TEST_OUTFILE','TEST_PROMPT','FAKE_AGY_ARGS_FILE','FAKE_AGY_EXIT_CODE','FAKE_AGY_OUTPUT','FAKE_AGY_SLEEP_MS','FAKE_CLAUDE_ARGS_FILE','FAKE_CLAUDE_PROMPT_FILE','FAKE_CLAUDE_CWD_FILE','FAKE_CLAUDE_DEPTH_FILE','FAKE_CLAUDE_EXIT_CODE','FAKE_CLAUDE_OUTPUT','FAKE_CLAUDE_ERROR','FAKE_CLAUDE_SLEEP_MS','FAKE_CLAUDE_LOGGED_IN','FAKE_CODEX_ARGS_FILE','FAKE_CODEX_EXIT_CODE','FAKE_CODEX_OUTPUT','FAKE_CODEX_ERROR','FAKE_CODEX_SLEEP_MS','FAKE_CODEX_LOGGED_IN','FAKE_STATUS_RESPONSE','AGENT_DELEGATION_DEPTH')) {
         Remove-Item -LiteralPath ("Env:$name") -ErrorAction SilentlyContinue
     }
     if ($testRoot.StartsWith($safeTempRoot, [StringComparison]::OrdinalIgnoreCase)) {

@@ -254,6 +254,20 @@ if ($OutputFormat -eq 'json' -and $stdout.Trim()) {
     }
 }
 
+$isAuthFailure = ($exitCode -ne 0) -and ($stdout + "`n" + $stderr -match '(?i)(Authentication required|Please run /login|not logged in|claude auth login|invalid bearer token|unauthorized|Please sign in)')
+if ($isAuthFailure) {
+    $exitCode = 78
+    $loginGuidance = "Claude CLI is not logged in. Run 'claude auth login' interactively, complete sign-in, then retry the delegated task."
+    if ($finalMessage -and -not $finalMessage.EndsWith([Environment]::NewLine)) { $finalMessage += [Environment]::NewLine }
+    $finalMessage += $loginGuidance
+    if ($stderr -and -not $stderr.Contains("claude auth login")) {
+        $stderr += [Environment]::NewLine + $loginGuidance
+    }
+    elseif (-not $stderr) {
+        $stderr = $loginGuidance
+    }
+}
+
 if ($resolvedRawFile) { [IO.File]::WriteAllText($resolvedRawFile, $stdout, $utf8NoBom) }
 if ($resolvedOutFile) { [IO.File]::WriteAllText($resolvedOutFile, $finalMessage, $utf8NoBom) }
 

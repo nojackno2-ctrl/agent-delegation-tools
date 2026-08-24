@@ -1,0 +1,127 @@
+import * as path from 'node:path';
+import * as os from 'node:os';
+import * as fs from 'node:fs';
+import { resolveCodexExecutable } from '../../core/executables.js';
+import { spawnProcess } from '../../core/process.js';
+import { ensureAsciiDirectory } from '../../core/junction.js';
+import { ExecutionResult, EXIT_CODES } from '../../core/types.js';
+import { DEFAULT_MODELS, DEFAULT_SANDBOX } from '../../core/defaults.js';
+
+export interface InvokeCodexOptions {
+  prompt: string;
+  sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  model?: string;
+  effort?: string;
+  workDir?: string;
+  addDirs?: string[];
+  outFile?: string;
+  timeoutSec?: number;
+  codexPath?: string;
+  approveForMe?: boolean;
+}
+
+export async function invokeCodex(options: InvokeCodexOptions): Promise<ExecutionResult> {
+  let executable: string;
+  try {
+    executable = resolveCodexExecutable(options.codexPath);
+  } catch (err: any) {
+    return {
+      exitCode: EXIT_CODES.CONFIG_AUTH_ERROR,
+      stdout: '',
+      stderr: err.message,
+      durationMs: 0,
+    };
+  }
+
+  const sandbox = options.sandbox || DEFAULT_SANDBOX;
+  const targetDir = options.workDir || process.cwd();
+  const effectiveModel = options.model || DEFAULT_MODELS.codex.model;
+  const effectiveEffort = options.effort || DEFAULT_MODELS.codex.effort;
+
+  // Resolve ASCII directory via Junction if path contains non-ASCII characters
+  const dirResolution = ensureAsciiDirectory(targetDir);
+
+  const tempOutFile =
+    options.outFile ||
+    path.join(os.tmpdir(), `mcp-codex-out-${Date.now()}-${Math.random().toString(36).substring(2, 8)}.txt`);
+
+  const useAutomaticApproval = options.approveForMe !== false && sandbox === 'workspace-write';
+  const args: string[] = [
+    'exec',
+    '--cd',
+    dirResolution.effectivePath,
+    '--color',
+    'never',
+    '--ephemeral',
+    '--skip-git-repo-check',
+    '--output-last-message',
+    tempOutFile,
+    '-m',
+    effectiveModel,
+    '-c',
+    `model_reasoning_effort="${effectiveEffort}"`,
+  ];
+
+  // Current Codex CLI makes --approve-for-me imply workspace-write and rejects
+  // combining it with an explicit --sandbox value. Read-only and explicitly
+  // approval-disabled runs keep the direct sandbox flag.
+  if (useAutomaticApproval) {
+    args.push('--approve-for-me');
+  } else {
+    args.push('--sandbox', sandbox);
+  }
+
+  if (options.addDirs) {
+    for (const d of options.addDirs) {
+      if (d) {
+        const asciiAddDir = ensureAsciiDirectory(d);
+        args.push('--add-dir', asciiAddDir.effectivePath);
+      }
+    }
+  }
+
+  // Pass prompt to exec
+  args.push(options.prompt);
+
+  const timeoutMs = (options.timeoutSec || 900) * 1000;
+
+  try {
+    const result = await spawnProcess({
+      executable,
+      args,
+      cwd: dirResolution.effectivePath,
+      timeoutMs,
+    });
+
+    let output = '';
+    if (fs.existsSync(tempOutFile)) {
+      try {
+        output = fs.readFileSync(tempOutFile, 'utf8');
+        if (!options.outFile) fs.unlinkSync(tempOutFile);
+      } catch {
+        // ignore
+      }
+    }
+
+    if (!output.trim()) {
+      output = result.stdout;
+    }
+
+    // Login check
+    if (/login|sign in|auth required|not authenticated/i.test(result.stderr + output) && result.exitCode !== 0) {
+      return {
+        ...result,
+        exitCode: EXIT_CODES.CONFIG_AUTH_ERROR,
+        output: output.trim(),
+        stderr: `Codex authentication required (Exit 78):\n${result.stderr || output}`,
+      };
+    }
+
+    return {
+      ...result,
+      output: output.trim(),
+    };
+  } finally {
+    dirResolution.cleanup();
+  }
+}

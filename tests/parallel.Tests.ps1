@@ -76,7 +76,7 @@ try {
     Assert-True (Test-Path -LiteralPath $summary.tasks[1].resultFile -PathType Leaf) 'Per-task result metadata file is missing.'
 
     $implementationTasks = @(
-        [ordered]@{ name='writer'; prompt=(@{name='writer';expectedSandbox='workspace-write'} | ConvertTo-Json -Compress); agent='codex'; taskType='implementation'; writeScope=@('src\writer') }
+        [ordered]@{ name='writer'; prompt=(@{name='writer';expectedSandbox='workspace-write'} | ConvertTo-Json -Compress); agent='codex'; sandbox='workspace-write'; taskType='implementation'; writeScope=@('src\writer') }
     )
     $implementationTaskFile = Join-Path $testRoot 'implementation-tasks.json'
     [IO.File]::WriteAllText($implementationTaskFile, ($implementationTasks | ConvertTo-Json -Depth 5), $utf8NoBom)

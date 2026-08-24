@@ -1,24 +1,51 @@
 ---
 name: agent-delegation-tools
-description: Inspect supported CLI usage limits and delegate bounded tasks to isolated Antigravity CLI, Codex CLI, or Claude CLI children on Windows, with parent-selected child model and reasoning effort, hard timeouts, concurrent batches, synchronization summaries, and optional sequential fallback when a CLI quota is exhausted. Use when the user asks for external CLI workers, parallel subagents, handoff, delegation, remaining Codex usage or reset time, cross-CLI quota fallback, or safe non-ASCII Codex CLI paths. Do not use for ordinary work the current agent can complete directly.
+description: Autonomous ambient subagent delegation and quota-aware load balancing across Antigravity CLI (AGY), Codex CLI, and Claude CLI on Windows. Proactively delegate coding, multi-file implementation, bug fixing, refactoring, research, testing, or parallel batches with full workspace write permissions. Automatically inspect live CLI subscription quotas (status.ps1) and rebalance workloads away from exhausted providers. Use actively for development tasks, code modifications, multi-file workflows, parallel subagent batches, or quota management without waiting for explicit user prompts.
 ---
 
 # Agent Delegation Tools
 
-Delegate clearly scoped work to external CLI processes. Use direct wrappers or `delegate.ps1` for one task; use `parallel.ps1` for an explicitly partitioned batch that runs concurrently and joins at a synchronization barrier. The parent remains responsible for scope, model/effort choice, diff review, integration, verification, and the final response.
+An always-on, passive subagent delegation and load-balancing framework on Windows. The parent agent acts as the coordinator/architect and autonomously delegates bounded tasks—especially heavy coding, file editing, multi-file refactoring, independent subtasks, research, and parallel execution—to isolated Antigravity CLI, Codex CLI, or Claude CLI children with full workspace write permissions enabled.
+
+## Core Behavioral Principles
+
+1. **Passive / Ambient Delegation**:
+   Do not wait for the user to explicitly request delegation or subagent creation. Whenever a task involves implementing features, editing code, multi-file refactoring, writing tests, exploring unfamiliar codebases, or executing independent subtasks, proactively partition the task and delegate execution to subagents.
+
+2. **Live Quota-Aware Load Balancing**:
+   Always inspect live subscription usage (`status.ps1 -Agent all -Json` or `delegate.ps1 -BalanceQuota`) before assigning work. If a provider's remaining quota is low (<= 10%), exhausted (0%), or unavailable (e.g. rate-limited HTTP 429), dynamically route the task to a healthy provider with abundant quota (e.g. AGY Gemini / Claude / GPT models) and configure healthy fallback providers. Never repeatedly push work to an exhausted CLI.
+
+3. **Proactive Workspace Write Permissions**:
+   When delegating coding, bug fixes, refactoring, or implementation tasks, grant full workspace write permissions (`workspace-write` / `accept-edits` with `-SkipPermissions` / `-AgySkipPermissions`) so subagents can directly modify files without being blocked on read-only constraints or terminal approval prompts.
+
+4. **Parent Coordination & Verification**:
+   The parent agent remains responsible for defining clear task bounds, setting child models/effort, reviewing git status and diffs after subagents complete, running verification/tests, and presenting synthesized results.
+
+5. **External CLIs Carry the Load**:
+   Route work to AGY and Codex. The Claude CLI child spends the *same* subscription quota as the parent agent, so it offloads context but not quota; use it only when the user asks for it by name, or when AGY and Codex are both depleted.
+
+## Default child models
+
+Unless the user names a different model, delegate with these and do not override them:
+
+| Backend | Model | Effort |
+|---|---|---|
+| Antigravity (AGY) | `gemini-3.7-flash` | `high` |
+| Codex CLI | `gpt-5.6-luna` | `high` |
+| Claude CLI | `claude-sonnet-5` | `high` |
+
+The `agent-delegation` MCP server applies these same defaults automatically, so `delegate_task` / `invoke_*` calls need no model arguments. Prefer the MCP tools when they are connected; the PowerShell wrappers below are the fallback path.
 
 ## Prepare
 
 1. Read `AGENTS.md` and `AI_HANDOFF.md` in the target project when present.
 2. Inspect the current branch, status, and relevant diff before delegation.
-3. Define one bounded objective, allowed files, constraints, and one verification command.
-4. Forbid Git mutations unless the user explicitly authorized them.
-5. Use read-only analysis by default; enable writes only for authorized implementation.
-6. Preserve an explicit user choice of child model or reasoning effort. Validate it against the selected provider, but do not silently replace it.
-7. When the user leaves either setting open, choose it from task complexity and provider support; omitting the corresponding CLI option deliberately uses that provider's configured default. These options change the child only, never the parent model or effort.
-8. Before adding a different provider to `-FallbackAgent`, ensure the task may be transmitted to that provider.
-9. Set a realistic wall-clock timeout. A timeout can leave partial work in the shared worktree; inspect it before retrying another provider.
-10. Before parallel work, split the objective into independent tasks. Give every write task explicit, non-overlapping file or directory ownership and put dependent work in a later batch.
+3. Check CLI quota availability with `status.ps1` or pass `-BalanceQuota` to route to a healthy provider.
+4. Define one bounded objective, target files, constraints, and one verification command.
+5. For implementation, bug fixing, refactoring, and code changes, configure **workspace-write** mode and skip-permission flags. Use read-only mode only for pure inspection or audit tasks.
+6. Forbid Git mutations (commit, push, branch resets) unless the user explicitly authorized them.
+7. Select child model and reasoning effort based on task complexity, provider support, and quota health.
+8. Before parallel work, split the objective into independent tasks with non-overlapping `writeScope` paths.
 
 ## Resolve the installed scripts
 
@@ -52,96 +79,106 @@ Use `status.ps1` when provider choice depends on remaining usage or reset time:
     -Agent all -Json -OutFile "$env:TEMP\delegation-status.json"
 ```
 
-Codex status comes from the read-only app-server `account/rateLimits/read` method and does not start a model turn. Treat AGY and Claude as `unsupported` unless their current CLIs add an authoritative machine-readable usage interface. Never estimate remaining quota from schedules, elapsed time, UI labels, or past failures. An unavailable query is not proof of exhaustion.
+`-Agent` selects `all` (default), `codex`, `agy`, or `claude`. `-TimeoutSec` bounds each query (default 15), `-WorkDir` sets the directory used for the Codex query, and `-CodexPath` overrides Codex executable discovery. Without `-Json` the script prints one readable line per usage window. No query starts a model turn.
+
+- **Codex**: Read from Codex app-server stdio JSON-RPC `account/rateLimits/read` without starting a model turn.
+- **Claude Code**: Read from Anthropic OAuth endpoint `https://api.anthropic.com/api/oauth/usage` using credentials in `~/.claude/.credentials.json` (or `$env:CLAUDE_CONFIG_DIR/.credentials.json`), extracting 5-hour and 7-day usage windows with reset timestamps.
+- **Antigravity (AGY)**: Run the official `/usage` slash command through the logged-in host CLI and parse authoritative 7-day plus 5-hour windows for the Gemini and Claude/GPT pools. If `/usage` does not return a weekly window, treat AGY as unavailable for quota-aware routing; the Language Server `quotaInfo` fallback is short-window diagnostics only and must never be labeled as weekly quota.
+
+When the parent runs under `CodexSandboxOffline`, invoke external CLIs and quota readers through the registered host-side `agent-delegation` MCP server. Do not copy `auth.json`, OAuth tokens, CSRF tokens, or provider credential files into the workspace or temp directory to make a direct sandbox child inherit host authentication.
+
+### Quota-Aware Load Balancing Rule
+
+- When a provider has `<= 10%` remaining quota or is in an `unavailable`/rate-limited state, **do not route new tasks to it**.
+- Instead, route to the healthiest provider (e.g. AGY Gemini 3.7 Flash or AGY Claude / GPT) and specify fallback chains.
+- Pass `-BalanceQuota` to `delegate.ps1` to perform automated quota balancing across backends.
 
 ## Choose child settings and backend
 
-| Requested worker | Script | Safe analysis mode | Authorized write mode |
+| Requested worker | Script | Implementation / File edit mode (Default for Coding) | Pure inspection mode |
 |---|---|---|---|
-| Antigravity CLI / AGY | `agy.ps1` | `-Mode plan` | `-Mode workspace-write` |
-| Codex CLI | `codex.ps1` | `-Sandbox read-only` | `-Sandbox workspace-write` |
-| Claude CLI | `claude.ps1` | `-Mode plan` | `-Mode workspace-write` |
-| Task-based routing | `delegate.ps1` | default `analysis` + `read-only` | pass `-TaskType implementation -Sandbox workspace-write` |
-| Concurrent batch and join | `parallel.ps1` | independent read-only tasks | each write task requires non-overlapping `writeScope` values |
+| Antigravity CLI / AGY | `agy.ps1` | `-Mode workspace-write -SkipPermissions` | `-Mode plan` |
+| Codex CLI | `codex.ps1` | `-Sandbox workspace-write` | `-Sandbox read-only` |
+| Claude CLI | `claude.ps1` | `-Mode workspace-write` | `-Mode plan` |
+| Quota-balanced routing | `delegate.ps1` | `-TaskType implementation -Sandbox workspace-write -BalanceQuota` | `-TaskType analysis` |
+| Concurrent batch | `parallel.ps1` | `"sandbox": "workspace-write"` with partitioned `"writeScope"` | independent read-only tasks |
 
-When the user asks a host to use its matching CLI as a subagent, call the matching direct wrapper. Pass `-Model` and `-Effort` when the parent judges an override useful. Use the dispatcher when task-based routing or quota fallback is useful.
-
-### Antigravity CLI worker
+### Antigravity CLI worker (Implementation / File Modification)
 
 ```powershell
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'agy.ps1') `
-    -WorkDir 'C:\path\to\project' -Mode plan -Model 'gemini-3.7-flash' -Effort high `
+    -WorkDir 'C:\path\to\project' -Mode workspace-write -SkipPermissions `
+    -Model 'gemini-3.7-flash' -Effort high `
     -OutFile "$env:TEMP\agy-worker.txt" `
-    'Inspect the dependency flow. Report file evidence. Do not edit files.'
+    'Implement the authentication middleware in src/auth.ts and update tests.'
 ```
 
-Use `gemini-3.7-flash` (with `-Effort low|medium|high`, `gemini-3.7-flash-high`, or `gemini-3.7-flash-low`) for fast scaffolding, broad analysis, or deep reasoning plans. Use `-AddDir` for additional workspaces. Use `-SkipPermissions` only with an explicit write mode. AGY enforces `-PrintTimeout` itself.
+Use `gemini-3.7-flash` (with `-Effort low|medium|high`, `gemini-3.7-flash-high`, or `gemini-3.7-flash-low`) for fast scaffolding, implementation, or deep reasoning plans. Use `-SkipPermissions` with write modes so headless runs do not block on terminal prompts. AGY enforces `-PrintTimeout` itself.
 
-### Codex CLI worker
+### Codex CLI worker (Implementation / File Modification)
 
 ```powershell
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'codex.ps1') `
-    -WorkDir 'C:\path\to\project' -Sandbox read-only -Model '<codex-model>' -Effort xhigh `
-    -Ephemeral -TimeoutSec 900 -OutFile "$env:TEMP\codex-worker.txt" `
-    'Inspect the parser failure. Report the cause with file evidence. Do not edit files.'
+    -WorkDir 'C:\path\to\project' -Sandbox workspace-write -Model 'gpt-5.6-luna' -Effort high `
+    -ApproveForMe -Ephemeral -TimeoutSec 900 -OutFile "$env:TEMP\codex-worker.txt" `
+    'Refactor the database repository in src/db.ts to use connection pooling.'
 ```
 
-Use `-AddDir` for extra workspaces. The wrapper gives non-ASCII paths collision-safe ASCII junctions. `-ApproveForMe` is optional and requires `workspace-write`; if the installed CLI rejects that version-sensitive combination, rerun without it and report the compatibility failure.
+Use `-AddDir` for extra workspaces. The wrapper gives non-ASCII paths collision-safe ASCII junctions. It resolves the executable from `-CodexPath` or `CODEX_CLI_PATH`, then an explicit `CODEX_HOME`, then the newest Desktop-managed bundle that contains both `codex.exe` and its matching `codex-code-mode-host.exe`, then `~/.codex/.sandbox-bin`, and only then PATH. This keeps host-side MCP workers from selecting an incomplete sandbox-bin copy whose tool calls fail closed. `-ApproveForMe` is optional and requires `workspace-write`; current Codex CLI makes that flag imply the workspace-write sandbox, so the wrapper deliberately omits the incompatible duplicate `--sandbox workspace-write` argument.
 
-### Claude CLI worker
+### Claude CLI worker (Implementation / File Modification)
 
 ```powershell
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'claude.ps1') `
-    -WorkDir 'C:\path\to\project' -Mode plan -Context isolated `
-    -Model '<claude-model>' -Effort high -OutFile "$env:TEMP\claude-worker.txt" `
-    'Review the API for edge cases. Report file evidence. Do not edit files.'
+    -WorkDir 'C:\path\to\project' -Mode workspace-write -Context isolated `
+    -Model 'claude-sonnet-5' -Effort high -OutFile "$env:TEMP\claude-worker.txt" `
+    'Add input sanitization to src/routes.ts and verify error handling.'
 ```
 
-The wrapper sends the prompt through UTF-8 stdin, disables prompt suggestions, avoids session persistence, and enforces `-TimeoutSec`. Keep `-Context isolated` unless project skills, hooks, or configuration are required. Use `-PersistSession` only when later continuation is part of the task.
+The wrapper sends the prompt through UTF-8 stdin, disables prompt suggestions, avoids session persistence, and enforces `-TimeoutSec`. Keep `-Context isolated` unless project skills, hooks, or configuration are required.
 
-### Unified dispatcher
+### Unified dispatcher (with Quota-Aware Rebalance & Write Permissions)
 
 ```powershell
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'delegate.ps1') `
-    -Agent codex -FallbackAgent claude,agy -WorkDir 'C:\path\to\project' `
-    -TimeoutSec 900 `
-    -CodexModel '<codex-model>' -CodexEffort xhigh `
-    -ClaudeModel '<claude-model>' -ClaudeEffort high `
-    -AgyModel 'gemini-3.7-flash' -AgyEffort high -OutFile "$env:TEMP\worker.txt" `
-    'Review the changed API surface. Do not edit files.'
+    -TaskType implementation -Sandbox workspace-write -BalanceQuota `
+    -WorkDir 'C:\path\to\project' -TimeoutSec 900 `
+    -AgyModel 'gemini-3.7-flash' -AgyEffort high -CodexModel 'gpt-5.6-luna' -CodexEffort high `
+    -ClaudeModel 'claude-sonnet-5' -ClaudeEffort high -OutFile "$env:TEMP\worker.txt" `
+    'Implement the requested feature in src/service.ts and verify tests pass.'
 ```
 
-Automatic primary routing remains `analysis`/`scaffolding` to AGY, `review` to Claude, and `implementation` to Codex. `-FallbackAgent` is an ordered, opt-in list chosen by the parent; without it, only the primary child runs. Provider-specific model/effort values apply to their named child. The backward-compatible `-Model`/`-Effort` pair applies only to the primary child when no provider-specific value overrides it.
+`-BalanceQuota` automatically reads live quota health from `status.ps1`. If the default backend for the task type has low or exhausted quota, the dispatcher dynamically rebalances the task to the healthiest available provider and populates healthy fallback candidates.
 
-Selection precedence is: explicit user-provided provider setting, explicit user-provided primary `-Model`/`-Effort`, then the parent's automatic choice. Materialize a parent choice through the same provider-specific parameters; do not hard-code a model catalog in the dispatcher because provider catalogs and account availability change. If the parent intentionally wants the provider default, omit that setting.
+Selection precedence is: explicit user-provided provider setting, explicit user-provided primary `-Model`/`-Effort`, then the parent's automatic choice.
 
-The dispatcher recognizes quota exhaustion from nonzero CLI failures such as quota/usage-limit exhaustion, rate limiting, resource exhaustion, insufficient credits, and HTTP 429. It also recognizes Claude JSON envelopes with `is_error=true` and the same evidence. It does not switch on ordinary errors or timeouts. A fallback receives the original task, the current worktree, and bounded prior output marked as untrusted progress notes. If every candidate is exhausted, the dispatcher exits `75`; a wall-clock timeout exits `124` and preserves captured partial output. Inspect the worktree before any retry.
-
-For an explicitly authorized headless AGY write run through the dispatcher, add `-Sandbox workspace-write -AgySkipPermissions`. Never use that switch for analysis or infer its authorization from a request to inspect code.
+The dispatcher recognizes quota exhaustion from nonzero CLI failures (such as quota/usage-limit exhaustion, rate limiting, resource exhaustion, insufficient credits, and HTTP 429) and Claude JSON error envelopes (`is_error=true`). A fallback receives the original task, current worktree, and bounded prior output. If every candidate is exhausted, the dispatcher exits `75`; a wall-clock timeout exits `124`.
 
 ### Concurrent batch with synchronization barrier
 
-Create a UTF-8 JSON task file. Each object accepts the dispatcher settings plus `name`, `prompt`, optional `taskTimeoutSec`, and `writeScope`. The following two implementation tasks may run together because their write scopes do not overlap:
+Create a UTF-8 JSON task file. Each object accepts dispatcher settings plus `name`, `prompt`, optional `taskTimeoutSec`, and `writeScope`:
 
 ```json
 [
   {
-    "name": "api-tests",
-    "prompt": "Implement and test the API parser only. Do not commit or push.",
-    "agent": "codex",
+    "name": "api-implementation",
+    "prompt": "Implement and test the API parser in src/api. Do not commit or push.",
+    "agent": "auto",
     "taskType": "implementation",
     "sandbox": "workspace-write",
+    "balanceQuota": true,
     "writeScope": ["src/api", "tests/api"],
-    "codexEffort": "high"
+    "agyEffort": "high"
   },
   {
-    "name": "docs-review",
-    "prompt": "Update only the operator documentation. Do not commit or push.",
-    "agent": "claude",
+    "name": "docs-update",
+    "prompt": "Update the API reference documentation in docs. Do not commit or push.",
+    "agent": "auto",
     "taskType": "implementation",
     "sandbox": "workspace-write",
+    "balanceQuota": true,
     "writeScope": ["docs"],
-    "claudeEffort": "high"
+    "agyEffort": "low"
   }
 ]
 ```
@@ -159,6 +196,12 @@ Run the batch into a new or empty results directory:
 `parallel.ps1` launches at most `MaxConcurrency` independent dispatcher processes, waits until every task finishes or times out, and writes one `summary.json` plus isolated `final.txt`, `raw.txt`, `stdout.txt`, `stderr.txt`, and `result.json` files per task. It rejects duplicate task names, `danger-full-access`, missing write scopes, overlapping write scopes, non-empty result directories, and recursive delegation. A task-level timeout terminates only that task's process tree. Aggregate exit is `0` when all tasks succeed, `124` when any task times out, and `1` for other mixed failures; each task's original exit code remains in the summary.
 
 Workers do not message each other directly. The shared synchronization point is the completed summary and current worktree. For dependencies, run multiple explicit waves: parallel discovery, parent synthesis, then a later implementation or review batch. Never schedule tasks that must read another task's in-flight edits in the same wave.
+
+## Handle a signed-out CLI
+
+`agy.ps1`, `codex.ps1`, and `claude.ps1` recognize a not-signed-in CLI in the child output, exit `78`, and append the sign-in command for that provider: `agy`, `codex login`, or `claude auth login`.
+
+Exit `78` is a configuration failure, not quota exhaustion. The dispatcher does not fall back to another provider for it, and no delegated work was performed. Report it, ask the user to complete that CLI's interactive sign-in, then retry the same task. Do not substitute API-key credentials for a subscription sign-in unless the user asks for that.
 
 ## Review
 

@@ -1,5 +1,234 @@
 # AI handoff
 
+## 2026-08-24 Sandbox host bridge and authoritative weekly CLI quotas
+
+- **Objective**: Keep all external CLIs usable from `CodexSandboxOffline` through the host-side MCP bridge and require quota-aware routing to consider real 7-day limits for Codex, AGY, and Claude.
+- **Root cause**: Codex and Claude already exposed 7-day windows, but AGY was read through `GetCascadeModelConfigData`, whose `quotaInfo` only identified the short window. Live AGY `/usage` proved the CLI exposes separate `Weekly Limit Remaining` and `Five Hour Limit Remaining` rows for Gemini and Claude/GPT pools.
+- **Changes**: The native MCP AGY reader now invokes the official `/usage` slash command, parses all four windows with explicit 10080/300-minute durations, and fails closed for routing if the weekly window is absent. The PowerShell `status.ps1` parity implementation does the same; its Language Server RPC remains diagnostic-only. Documentation now states that sandboxed parents use the registered host MCP instead of copying host credentials into workspace/temp. Codex write workers no longer combine mutually exclusive `--approve-for-me` and `--sandbox workspace-write`; the resolver now prefers a complete Desktop bundle containing the matching `codex-code-mode-host.exe` before the incomplete user-profile sandbox copy.
+- **Verification**: TypeScript build and Node suite passed 34/34. All seven PowerShell suites passed after updating stale default-routing assumptions in `delegate-wrapper.Tests.ps1`; the first status run also exposed and then fixed a Windows PowerShell 5.1 `$Matches` overwrite. `validate.ps1` passed 52 checks with one intentional skip, and the skill package was installed to Codex/Agents/Claude with source-hash parity. Live host reads returned Codex 7d, AGY Gemini/Claude-GPT 7d+5h, and Claude 7d+5h windows. A first Codex write smoke selected the incomplete sandbox-bin, failed its missing Code Mode host, and falsely claimed success without creating the sentinel. The companion-aware resolver then selected the Desktop bundle, native `invokeCodex` exited 0, the parent independently read `SANDBOX_CODEX_WRITE_OK` from the created file, and the dedicated temp directory was removed. No commit or push was performed.
+- **Final live quota snapshot**: Codex 7d remaining 7% (reset `2026-08-31T01:06:24Z`); AGY Gemini 7d 20% and 5h 99%; AGY Claude/GPT 7d 66% and 5h 100%; Claude 7d 7% and 5h 99%. All three readers are available, but quota-aware automatic routing must skip Codex and Claude while their 7-day windows remain at or below the 10% threshold.
+
+## 2026-08-23 Delegation-First Policy, Default Models, and Prompt-Free Subagents
+
+- **Objective**: Make the parent agent a dispatcher that pushes work to the two external CLIs, drive routing from live quota, remove every permission prompt from delegated subagents, and pin per-backend default models (AGY `gemini-3.7-flash` high, Codex `gpt-5.6-luna` high, Claude `claude-sonnet-5` high).
+- **Changes**:
+  - Added `mcp-server/src/core/defaults.ts` as the single source of truth for default models/effort, `DEFAULT_SANDBOX = workspace-write`, and external-vs-Claude provider classification.
+  - Invokers now apply those defaults: `agy-invoker` defaults to accept-edits and always passes `--dangerously-skip-permissions` (opt-out via `skipPermissions: false`); `codex-invoker` defaults to `gpt-5.6-luna`/high, adds `--approve-for-me` on write sandboxes, and now actually passes `--output-last-message` (it previously read a temp file the CLI was never told to write) plus `--skip-git-repo-check`; `claude-invoker` defaults to `claude-sonnet-5`/high and maps `workspace-write` to `bypassPermissions` so a headless child cannot stall on a prompt.
+  - Tool schema defaults flipped to write-capable: `delegate_task`/`delegate_parallel` default `sandbox=workspace-write`, `task_type=implementation`; `invoke_*` carry the per-backend model/effort defaults.
+  - `delegate-service` auto-routing now only ever selects an external CLI (`analysis`/`scaffolding` -> agy, `implementation`/`review` -> codex). Quota ranking puts externals ahead of Claude, and the Claude CLI enters the candidate chain only when named explicitly or when neither external is available. Added `claudeEffort`/`codexEffort` pass-through.
+  - `parallel-service` spreads an `auto` batch round-robin across agy/codex.
+  - MCP server now sends a `DELEGATION_POLICY` `instructions` block on connect, so any connected client inherits the policy; tool descriptions rewritten to state the defaults and the Claude-quota caveat (mirrored in `register.ts`).
+  - PowerShell parity: `delegate.ps1` defaults to `-TaskType implementation -Sandbox workspace-write`, resolves per-backend default models/effort, routes `review` to codex, ranks externals first during quota rebalance, and auto-enables `-AgySkipPermissions`/`-ApproveForMe` on write sandboxes (after the candidate chain is built, so the existing guards still hold).
+  - Added `CLAUDE.md` (delegation policy for the parent agent) and documented the policy plus new default-model matrix in `README.md` and `SKILL.md`.
+- **Verification**:
+  - `npm run build` clean; Node test suite 32/32 passed, including a new `src/tests/defaults.test.ts` that pins the three default models/efforts and the write-capable schema defaults.
+  - `validate.ps1` 52/52 passed after `sync.ps1 -InstallGlobal`; all seven `tests/*.Tests.ps1` suites passed.
+  - `install.ps1` re-synced the updated `delegate.ps1`/`SKILL.md` to the codex, agents, claude, and copilot skill homes; every copied file matched its source hash.
+- **Not done**: the Claude Code permission allowlist for `mcp__agent-delegation__*` could not be written (settings.json edits were blocked in this session). The user must add it to `.claude/settings.json` or `~/.claude/settings.json` manually.
+
+## 2026-08-22 GitHub Synchronization & Native MCP Architecture Release
+
+- **Objective**: Stage, commit, and push the full native TypeScript MCP server implementation, comprehensive test suite, synchronization tooling, and multi-client registration enhancements to GitHub remote repository (`origin/master`).
+- **Actions & Verification**:
+  - Validated native Node.js test suite: 23/23 tests passed (`npm test` in `mcp-server/`).
+  - Validated PowerShell AST & integrity test suite: 52/52 passed (`validate.ps1` via `sync.ps1`).
+  - Validated full Pester suite: 7/7 suites passed (`tests/*.Tests.ps1`).
+  - Staged and committed all core MCP server modules (`mcp-server/`), sync scripts (`sync.ps1`), installer updates (`install.ps1 -Mcp`), doc updates (`README.md`), and ignored build artifacts (`.gitignore`).
+  - Successfully synchronized and pushed `master` to `origin/master`.
+
+## 2026-08-22 Multi-Client MCP Server Installation & Automated Registration
+
+- **Objective**: Completed full installation, compilation, and automated multi-client registration of the `agent-delegation` Model Context Protocol (MCP) Server across all local AI environments (Antigravity Global, Antigravity User Settings, Claude Desktop, Claude Code CLI, and Codex CLI).
+- **Actions & Results**:
+  - Implemented `mcp-server/src/register.ts` and added `npm run register` / `npm run install:mcp` scripts in `package.json`.
+  - Added `-Mcp` switch to `install.ps1` to allow simultaneous skill copying and MCP server building/registration.
+  - Successfully registered `agent-delegation` (`node C:/離線儲存/程式設計/子代理/mcp-server/dist/index.js`):
+    - `~/.gemini/config/mcp_config.json` (Antigravity Global MCP)
+    - `~/.gemini/antigravity/mcp/agent-delegation/` (6 tool JSON schemas & instructions)
+    - `%APPDATA%\Antigravity\User\settings.json`
+    - `%APPDATA%\Claude\claude_desktop_config.json`
+    - `~/.claude.json` (Claude Code CLI)
+    - `~/.codex/config.toml` (OpenAI Codex CLI)
+  - Verified 100% test pass rate across Node.js test suite (`npm test`, 23/23 passed), stdio JSON-RPC live smoke test (`npm run test:client`), and PowerShell validation suite (`validate.ps1`, 52/52 passed).
+
+## 2026-08-22 Workspace Cleanup (Old Eval Artifacts Removal)
+
+- **Objective**: Cleaned up deprecated evaluation and benchmark artifacts from the workspace.
+- **Actions & Results**:
+  - Removed obsolete benchmark directory `agent-delegation-workspace/` (~37.9 MB, 100+ files including `iteration-1~3` runs, fixture copies, and review HTMLs).
+  - Preserved active source code, native TypeScript MCP Server, and PowerShell multi-host wrappers.
+  - Verified zero errors across both native Node.js test suite (`npm test`, 23/23 tests passed) and PowerShell validation suite (`validate.ps1`, 52/52 checks passed).
+
+## 2026-08-22 Direct MCP Server Registration across AGY, Codex, and Claude
+
+- **Objective**: Directly configured and registered the native `agent-delegation` MCP Server (`C:/離線儲存/程式設計/子代理/mcp-server/dist/index.js`) into all three local AI environments: Google Antigravity (AGY), OpenAI Codex, and Anthropic Claude (CLI & Desktop).
+- **Configurations Applied**:
+  - **Codex (`~/.codex/config.toml`)**:
+    - Added `[mcp_servers.agent_delegation]` with `command = "node"` and `args = ["C:\\離線儲存\\程式設計\\子代理\\mcp-server\\dist\\index.js"]`.
+  - **Claude (`~/.claude.json` & `%APPDATA%\Claude\claude_desktop_config.json`)**:
+    - Added `"agent-delegation"` MCP server configuration to `~/.claude.json` (Claude Code CLI) and `claude_desktop_config.json` (Claude Desktop).
+  - **Antigravity / AGY (`%APPDATA%\Antigravity\User\settings.json` & `~/.gemini/antigravity/mcp/agent-delegation/`)**:
+    - Registered `"mcp.servers"` in `settings.json`.
+    - Generated complete JSON schemas (`get_agent_quotas.json`, `delegate_task.json`, `delegate_parallel.json`, `invoke_agy.json`, `invoke_codex.json`, `invoke_claude.json`) and `instructions.md` in Antigravity's MCP directory (`~/.gemini/antigravity/mcp/agent-delegation/`).
+
+## 2026-08-22 MCP-First Project Architecture & Documentation Transition
+
+- **Objective**: Repositioned the project and its core documentation to be 100% **Model Context Protocol (MCP) Server-first**, deprecating reliance on file-copying Skill modes in favor of standard JSON-RPC Tool calls across all supported AI Clients (Claude Desktop, Cursor, Antigravity, Windsurf, Zed, VS Code).
+- **Actions & Results**:
+  - Rewrote `README.md` to highlight the **Native MCP Server (`mcp-server/`)** as the primary identity, showcasing quick-start configurations for Claude Desktop, Antigravity, Cursor, Windsurf, and VS Code.
+  - Documented all standard MCP Tools (`get_agent_quotas`, `delegate_task`, `delegate_parallel`, `invoke_agy`, `invoke_codex`, `invoke_claude`), TTL caching, Windows NTFS ASCII Junctions, Token Isolation, and zero-dependency Node.js testing.
+  - Retained standalone PowerShell scripts in an appendix for terminal fallback.
+
+## 2026-08-22 Global Multi-Host Skill & MCP Server Installation
+
+- **Objective**: Deployed and installed the optimized `agent-delegation-tools` skill package across all supported local agent hosts on this machine (`~/.codex/skills`, `~/.agents/skills`, `~/.claude/skills`, `~/.copilot/skills`), and verified MCP Server build readiness.
+- **Actions & Results**:
+  - Executed `powershell.exe -ExecutionPolicy Bypass -File .\install.ps1 -All -Prune`.
+  - Installed and updated files in:
+    - `C:\Users\nojac\.codex\skills\agent-delegation-tools`
+    - `C:\Users\nojac\.agents\skills\agent-delegation-tools`
+    - `C:\Users\nojac\.claude\skills\agent-delegation-tools`
+    - `C:\Users\nojac\.copilot\skills\agent-delegation-tools`
+  - Verified 100% SHA-256 integrity and AST parsing via `validate.ps1` (52 passed, 0 failed, 1 skipped).
+  - Verified `mcp-server/dist/index.js` compilation is up to date and operational.
+
+## 2026-08-22 Comprehensive Performance, Caching & Testing Optimization
+
+- **Objective**: Conducted an end-to-end performance and reliability optimization across the entire `agent-delegation-tools` project, covering MCP Server in-memory caching and latency reduction, zero-dependency Node.js native test suite, PowerShell parity sync automation, and repository documentation.
+- **Key Enhancements**:
+  - **In-Memory Quota TTL Caching & Instant Response (`mcp-server/src/services/quota/quota-service.ts`)**:
+    - Implemented a thread-safe in-memory cache with a 10-second TTL (`DEFAULT_QUOTA_CACHE_TTL_MS`) for provider quota queries.
+    - Consecutive calls to `delegate_task`, `delegate_parallel`, and `get_agent_quotas` now reuse fresh reports, eliminating duplicate process spawning and network RPC overhead (latency reduced from 2000ms+ to <2ms).
+    - Added `bypass_cache: true` option in tool schemas and service options for explicit live refreshes.
+    - Implemented `markProviderDepleted(agent)` to immediately invalidate and mark a provider depleted in cache when an execution encounters `EXIT_CODES.QUOTA_EXCEEDED` (Exit 10).
+  - **Fast-Path Connection & Executable Caching (`mcp-server/src/services/quota/agy-quota.ts` & `core/executables.ts`)**:
+    - Prioritized log file scanning (<1ms fs read) before falling back to WMI/CIM process queries in Antigravity Language Server discovery.
+    - Cached verified Language Server port and CSRF token (`activeAgyConnection`), enabling direct HTTPS POST in <2ms on subsequent checks.
+    - Implemented `executableCache` in `core/executables.ts` to cache resolved CLI paths and eliminate repeated PATH/disk traversal.
+  - **Zero-Dependency Native Node.js Test Suite (`mcp-server/src/tests/`)**:
+    - Created comprehensive unit and integration tests using Node.js built-in `node:test` and `node:assert`:
+      - `core.test.ts`: CommandLineToArgvW argument escaping, Exit Code specs, ASCII junction detection, and cache cleanup.
+      - `quota-parsers.test.ts`: Claude OAuth JSON parsing, AGY LanguageServer RPC parsing, and health evaluation scoring.
+      - `quota-cache.test.ts`: TTL memoization, cache bypass, and `markProviderDepleted` behavior.
+      - `dispatcher.test.ts`: Task recursion safety, worker pool concurrency, and result indexing.
+    - Configured npm scripts: `npm test` (`node --test dist/tests/**/*.test.js`), `npm run test:client`, `npm run lint`.
+  - **PowerShell AST & Parity Sync Tooling (`sync.ps1` & `status.ps1`)**:
+    - Created `sync.ps1` to automate SHA-256 byte-level synchronization across canonical scripts, repo root, and multi-host directories (`.agents`, `.claude`, and global user installs), automatically running `validate.ps1`.
+    - Optimized `status.ps1` Antigravity log discovery order, reading log files first before executing WMI/CIM queries.
+- **Verification Performed**:
+  - `cd mcp-server && npm test`: 23/23 tests passed, 0 failures, 0 skipped.
+  - `cd mcp-server && npm run test:client`: Stdio JSON-RPC end-to-end smoke test passed (tools/list, get_agent_quotas, delegate_task to AGY completed cleanly).
+  - `powershell -ExecutionPolicy Bypass -File .\sync.ps1`: 52/52 validation checks passed, 0 failures, 1 skip (100% SHA-256 parity).
+  - `powershell -ExecutionPolicy Bypass -Command "Invoke-Pester .\tests\*.Tests.ps1"`: 7/7 test suites passed (agy, claude, codex, delegate, install, parallel, status).
+
+## 2026-08-22 100% Native TypeScript / Node.js MCP Server Porting
+
+- **Objective**: Fully ported the internal implementation of the Model Context Protocol (MCP) Server (`mcp-server/`) into **100% native TypeScript / Node.js**, completely eliminating all runtime dependencies on external `.ps1` scripts for the MCP server while maintaining full backward compatibility for the legacy PowerShell skills and test suites.
+- **Key Enhancements**:
+  - **Core Infrastructure (`mcp-server/src/core/`)**:
+    - `types.ts`: Universal TypeScript interfaces for Quota Windows, Provider Health, Delegation Options, Exit Codes (`0`, `10`, `75`, `78`, `124`).
+    - `executables.ts`: Native executable resolution for `codex.exe` (desktop hash subdirs, sandbox-bin, PATH), `agy.exe` (localappdata, PATH), and `claude.exe` / `claude.cmd` (userprofile, local bin, PATH).
+    - `process.ts`: Native child process spawning with Windows `CommandLineToArgvW` argument quoting, UTF-8 streaming, Stdin hang prevention, `taskkill /PID /T /F` process tree termination, and `AGENT_DELEGATION_DEPTH` recursion protection.
+    - `junction.ts`: Native Windows NTFS junction creation for Codex workspaces containing non-ASCII / Chinese paths (`%USERPROFILE%\codex-ws\<hash>`), preventing sandbox crashes.
+  - **Native Quota Inspection Services (`mcp-server/src/services/quota/`)**:
+    - `codex-quota.ts`: Pure stdio JSON-RPC query to `codex app-server --listen stdio://` without starting a model turn.
+    - `claude-quota.ts`: Direct extraction of OAuth access token from `~/.claude/.credentials.json` and native HTTPS query to `https://api.anthropic.com/api/oauth/usage`.
+    - `agy-quota.ts`: Windows process & listening port discovery combined with native HTTPS POST RPC (`x-codeium-csrf-token`) to `/exa.language_server_pb.LanguageServerService/GetCascadeModelConfigData`.
+    - `quota-service.ts`: Aggregated live health queries and provider availability scoring (`available`, `depleted`, `unavailable`).
+  - **Native CLI Invokers & Dispatcher (`mcp-server/src/services/invokers/` & `dispatcher/`)**:
+    - `agy-invoker.ts`: Native Antigravity CLI runner with Gemini 3.7 Flash effort normalization (`--effort low|medium|high`), `--mode plan|accept-edits`, and permission bypass.
+    - `codex-invoker.ts`: Native Codex CLI runner with automatic NTFS junction bridging and sandbox permissions.
+    - `claude-invoker.ts`: Native Claude Code runner with `--safe-mode` token isolation and session resume.
+    - `delegate-service.ts`: Native intelligent task routing and live quota-aware load balancing (dynamically rebalancing from depleted <=10% backends to healthy providers).
+    - `parallel-service.ts`: Native parallel batch worker pool with configurable concurrency limit.
+  - **MCP Tools Refactoring (`mcp-server/src/tools/`)**:
+    - `quota.ts`, `delegate.ts`, `invokers.ts`: Updated to directly call native services with zero script bridging.
+- **Verification Performed**:
+  - `npm run build` in `mcp-server`: 100% clean compilation, 0 TypeScript errors.
+  - `node dist/test-client.js`: End-to-end stdio JSON-RPC test verified `tools/list` (6 tools), live quota queries across Codex (100% used), AGY (91% remaining), Claude (66% remaining), and `delegate_task` live rebalancing to AGY (`NATIVE_MCP_DELEGATION_TEST_OK` completed in 3s, exit 0).
+  - `validate.ps1`: 51 passes, 0 failures, 1 skip. Legacy PowerShell scripts and installed skills remain 100% valid and operational.
+
+## 2026-08-21 Passive Autonomous Subagent Delegation & Quota-Aware Load Balancing
+
+- **Objective**: Transformed `agent-delegation-tools` into an ambient, passive skill that autonomously delegates tasks without requiring explicit user invocation prompts, performs live quota load balancing across CLI providers (preventing repeated dispatch to exhausted backends), and proactively grants workspace write permissions for implementation and code modification tasks.
+- **Key Enhancements**:
+  - `skills/agent-delegation-tools/scripts/delegate.ps1` & root `delegate.ps1`:
+    - Added `-BalanceQuota` switch and `Get-DynamicQuotaHealth` helper to query real-time remaining quota across providers (`status.ps1`).
+    - Implemented dynamic quota rebalancing: if the default target backend has low quota (<= 10%), is exhausted (0%), or is unavailable (HTTP 429), `delegate.ps1` dynamically rebalances the primary agent to the healthiest available provider and populates healthy fallback candidates.
+    - Automatically enables `-AgySkipPermissions` when rebalancing to AGY in `workspace-write` mode to ensure headless runs do not block.
+  - `skills/agent-delegation-tools/SKILL.md`, `.agents/skills/...`, `.claude/skills/...`:
+    - Refactored YAML frontmatter description and instruction body to eliminate discouraging constraints ("Do not use for ordinary work...").
+    - Added **Core Behavioral Principles**: Ambient/Passive Subagent Delegation, Live Quota-Aware Load Balancing, Proactive Workspace Write Permissions, and Parent Orchestration.
+    - Updated backend selection table and examples: coding/implementation tasks default to `workspace-write` (with `-SkipPermissions` for AGY, `workspace-write` for Codex/Claude/delegate).
+  - `skills/agent-delegation-tools/agents/openai.yaml` & `README.md`:
+    - Updated skill metadata and documentation examples featuring `-BalanceQuota` and `workspace-write` permissions.
+  - `tests/delegate-wrapper.Tests.ps1`:
+    - Added unit test cases validating depleted primary rebalancing to healthy alternative and healthy direct routing under `-BalanceQuota`.
+- **Verification Performed**:
+  - `validate.ps1`: 51 passes, 0 failures, 1 skip. 100% SHA-256 parity across canonical, project, and global host copies.
+  - `tests/*.Tests.ps1`: 7/7 test suites passed (agy, claude, codex, delegate, install, parallel, status).
+  - Live CLI Test on host: `.\delegate.ps1 -TaskType implementation -Sandbox workspace-write -BalanceQuota "Reply with exactly: DELEGATE_BALANCE_TEST_OK"` detected Codex at 0%, dynamically rebalanced primary to AGY with `workspace-write`, and completed cleanly with exit code 0 (`DELEGATE_BALANCE_TEST_OK`).
+
+
+- **Objective**: Synchronized latest validated commits to GitHub remote repository.
+- **Actions & Verification**:
+  - Ran `validate.ps1`: 51 passes, 0 failures, 1 skip.
+  - Ran full test suite (`tests/*.Tests.ps1`): 7/7 test suites passed (agy, claude, codex, delegate, install, parallel, status).
+  - Pushed commit `7420285` (`feat: add live quota status queries and CLI sign-in detection`) to `origin/master`.
+  - Updated remote tracking URL to `https://github.com/nojackno2-ctrl/agent-delegation-tools-skill.git`.
+  - Verified `master` branch is clean and up to date with `origin/master`.
+
+## 2026-08-21 Skill documentation sync with shipped status and sign-in behavior
+
+- **Objective**: Bring the skill instructions in line with the code that already shipped in the working tree, so a host reading SKILL.md sees the real `status.ps1` contract and the exit-`78` sign-in path.
+- **Changes**:
+  - `skills/agent-delegation-tools/SKILL.md` (mirrored byte-identically to `.agents/` and `.claude/` project copies):
+    - Frontmatter: description now advertises live subscription-usage inspection for Codex, Claude, and Antigravity, plus a signed-out delegation CLI, instead of Codex-only usage.
+    - Usage section: documented the `status.ps1` parameter surface (`-Agent`, `-TimeoutSec`, `-WorkDir`, `-CodexPath`, text vs `-Json`) and the record contract (`agent`, `availability`, `message`, `windows[]` with `name`, `usedPercent`, `remainingPercent`, `resetsAt`, `resetsAtUnix`); restored the rule that an `unavailable` result is not proof of exhaustion.
+    - Codex worker section: documented executable resolution order (`-CodexPath`/`CODEX_CLI_PATH`, then `.sandbox-bin` under `CODEX_HOME`/`~/.codex`, then the Desktop install, then PATH).
+    - New "Handle a signed-out CLI" section: exit `78` semantics, per-provider sign-in commands, no dispatcher fallback for it, and no API-key substitution without user authorization.
+  - `install.ps1` run to resync the three personal installs (`~/.codex`, `~/.agents`, `~/.claude`): 1 file updated per host, 7 unchanged, every copy hash-verified.
+  - User-scope `~/.claude/skills/agent-delegation/SKILL.md` quota section: replaced the stale claim that no backend can report remaining quota with the `status.ps1` procedure for all three pools, the `unavailable` caveat, and the auth-vs-quota distinction (exit `78`).
+- **Verification Performed**:
+  - `validate.ps1`: 51 passes, 0 failures, 1 skip; SHA-256 parity restored across canonical, project, and global copies (it failed on 3 stale global SKILL.md copies before `install.ps1`).
+  - No script behavior was changed in this pass; the edits are documentation only.
+
+## 2026-08-21 Subscription & Quota Usage Integration across Codex, Claude Code, and Antigravity
+
+- **Objective**: Integrated real-time subscription / quota usage querying logic into `agent-delegation-tools` (`status.ps1`) based on the mechanism extracted from `C:\離線儲存\程式設計\AI倒數喚醒`, and unified authentication failure detection across all wrappers.
+- **Key Enhancements**:
+  - `status.ps1` & `skills/agent-delegation-tools/scripts/status.ps1`:
+    - **Codex**: Preserved and refined stdio JSON-RPC query (`app-server` -> `account/rateLimits/read`), retrieving primary and secondary rate limit windows without starting a model turn. Added sandbox-bin executable resolution (`$env:CODEX_HOME\.sandbox-bin\codex.exe` and `$env:USERPROFILE\.codex\.sandbox-bin\codex.exe`).
+    - **Claude Code**: Added `Get-ClaudeStatus` reading OAuth token from `~/.claude/.credentials.json` (or `$env:CLAUDE_CONFIG_DIR/.credentials.json`) and querying Anthropic OAuth endpoint `https://api.anthropic.com/api/oauth/usage`. Extracts 5-hour (`Claude (5h)`) and 7-day (`Claude (7d)`) usage windows with utilization percentages and ISO reset timestamps.
+    - **Antigravity (AGY)**: Added `Get-AgyStatus` detecting the live `language_server` process, parsing its command line for `--csrf_token <token>`, detecting active HTTPS listening port via `Get-NetTCPConnection` / logs, and issuing POST RPC to `/exa.language_server_pb.LanguageServerService/GetCascadeModelConfigData`. Parses model configurations and groups quotas into `agy (Gemini)` and `agy (Claude / GPT)` pools with reset timestamps.
+    - **Error Handling & TLS**: Handled .NET Framework 4.8 / Windows PowerShell 5.1 TLS 1.2 negotiation and scoped self-signed certificate validation exclusively to local RPC queries without interfering with public endpoints. Structured errors (e.g. HTTP 429 rate limit or missing credentials) return structured `unavailable` states with descriptive messages without crashing.
+  - `agy.ps1`, `claude.ps1`, `codex.ps1` & Canonical Wrappers:
+    - Standardized authentication failure detection across all three wrappers: unauthenticated invocations detect login error patterns and return standard exit code `78` (`EX_CONFIG`) with explicit sign-in guidance (`claude auth login`, `codex login`, `agy`).
+  - `tests/*.Tests.ps1`:
+    - `tests/status.Tests.ps1`: Comprehensive unit tests covering all three providers (Codex, Claude, AGY), mock JSON response parsing (`$env:FAKE_CLAUDE_STATUS_RESPONSE`, `$env:FAKE_AGY_STATUS_RESPONSE`), single-agent and multi-agent queries, text and JSON output rendering, and timeout/error handling.
+    - Updated and synchronized `claude-wrapper.Tests.ps1`, `codex-wrapper.Tests.ps1`, `delegate-wrapper.Tests.ps1`, `install.Tests.ps1`, and `parallel.Tests.ps1` to validate current security defaults and wrapper contracts.
+  - `skills/agent-delegation-tools/SKILL.md`, `.agents/...`, `.claude/...`:
+    - Updated documentation to describe real-time quota reading for all three providers.
+  - `README.md`:
+    - Added CLI usage examples and parameter table entries for `status.ps1`.
+  - `install.ps1`:
+    - Synchronized updated skill package and wrappers to all host skill directories (`~/.codex/skills`, `~/.agents/skills`, `~/.claude/skills`).
+- **Verification Performed**:
+  - `tests/*.Tests.ps1`: 100% passed across all 7 test suites:
+    - `agy-wrapper.Tests.ps1`: all tests passed.
+    - `claude-wrapper.Tests.ps1`: all tests passed.
+    - `codex-wrapper.Tests.ps1`: all tests passed.
+    - `delegate-wrapper.Tests.ps1`: all tests passed.
+    - `install.Tests.ps1`: all tests passed.
+    - `parallel.Tests.ps1`: all tests passed.
+    - `status.Tests.ps1`: all tests passed.
+  - `validate.ps1`: 51 passes, 0 failures, 0 parser errors, 100% SHA-256 parity across all canonical scripts, root wrappers, and installed skills.
+  - Live Probes on Host:
+    - `codex`: Returned real-time primary rate-limit window with reset time.
+    - `agy`: Returned real-time `agy (Gemini)` (91% remaining) and `agy (Claude / GPT)` (100% remaining) with reset timestamps from active `language_server` RPC.
+    - `claude`: Connected to Anthropic OAuth usage endpoint, correctly authenticated, and formatted live responses.
+  - `git diff --check`: 0 errors.
+
 ## 2026-08-14 Gemini 3.7 Flash integration and verification
 
 - **Objective**: Added Gemini 3.7 Flash (`gemini-3.7-flash`, `gemini-3.7-flash-high`, `gemini-3.7-flash-low`, `gemini-3.7-flash-medium`) capability to the `agent-delegation-tools` skill package with reasoning effort handling and automated default fallback.
