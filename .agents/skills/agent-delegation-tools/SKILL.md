@@ -1,6 +1,6 @@
 ---
 name: agent-delegation-tools
-description: Autonomous ambient subagent delegation and quota-aware load balancing across Antigravity CLI (AGY), Codex CLI, and Claude CLI on Windows. Proactively delegate coding, multi-file implementation, bug fixing, refactoring, research, testing, or parallel batches with full workspace write permissions. Automatically inspect live CLI subscription quotas (status.ps1) and rebalance workloads away from exhausted providers. Use actively for development tasks, code modifications, multi-file workflows, parallel subagent batches, or quota management without waiting for explicit user prompts.
+description: Autonomous ambient subagent delegation and quota-aware load balancing across Antigravity CLI (AGY), Codex CLI, and Claude CLI on Windows. In Codex, discover and prefer the host agent_delegation MCP tools before PowerShell wrappers. Use actively for coding, multi-file implementation, research, testing, parallel batches, or quota management.
 ---
 
 # Agent Delegation Tools
@@ -35,6 +35,13 @@ Unless the user names a different model, delegate with these and do not override
 | Claude CLI | `claude-sonnet-5` | `high` |
 
 The `agent-delegation` MCP server applies these same defaults automatically, so `delegate_task` / `invoke_*` calls need no model arguments. Prefer the MCP tools when they are connected; the PowerShell wrappers below are the fallback path.
+
+## MCP-First Discovery & Tool Routing
+
+1. **Early MCP Discovery**: In Codex and other MCP-enabled environments, first search deferred/lazy tools for `get_agent_quotas`, `delegate_task`, `delegate_parallel`, `invoke_agy`, `invoke_codex`, `invoke_claude` (including `ALL_TOOLS` / tool search when available).
+2. **Single Canonical Namespace**: Use exactly one connected `agent_delegation` namespace (`[mcp_servers.agent_delegation]`). Never mix or duplicate with legacy hyphenated aliases.
+3. **PowerShell Wrapper Fallback**: Only fall back to invoking the PowerShell wrappers (`delegate.ps1`, `status.ps1`, etc.) after tool search conclusively proves no host MCP server is connected.
+4. **Codex Sandbox Diagnostic Warning**: Running `codex mcp list` inside `CodexSandboxOffline` reads the sandbox home (`~/.codex/config.toml` inside the sandbox environment) and cannot diagnose or inspect the parent Desktop host registry. Host MCP tools are bridged from the parent host environment; do not mistake sandbox CLI output for host MCP disconnection.
 
 ## Prepare
 
@@ -85,7 +92,7 @@ Use `status.ps1` when provider choice depends on remaining usage or reset time:
 - **Claude Code**: Read from Anthropic OAuth endpoint `https://api.anthropic.com/api/oauth/usage` using credentials in `~/.claude/.credentials.json` (or `$env:CLAUDE_CONFIG_DIR/.credentials.json`), extracting 5-hour and 7-day usage windows with reset timestamps.
 - **Antigravity (AGY)**: Run the official `/usage` slash command through the logged-in host CLI and parse authoritative 7-day plus 5-hour windows for the Gemini and Claude/GPT pools. If `/usage` does not return a weekly window, treat AGY as unavailable for quota-aware routing; the Language Server `quotaInfo` fallback is short-window diagnostics only and must never be labeled as weekly quota.
 
-When the parent runs under `CodexSandboxOffline`, invoke external CLIs and quota readers through the registered host-side `agent-delegation` MCP server. Do not copy `auth.json`, OAuth tokens, CSRF tokens, or provider credential files into the workspace or temp directory to make a direct sandbox child inherit host authentication.
+When the parent runs under `CodexSandboxOffline`, invoke external CLIs and quota readers through the registered host-side `agent_delegation` MCP server. Do not copy `auth.json`, OAuth tokens, CSRF tokens, or provider credential files into the workspace or temp directory to make a direct sandbox child inherit host authentication.
 
 ### Quota-Aware Load Balancing Rule
 

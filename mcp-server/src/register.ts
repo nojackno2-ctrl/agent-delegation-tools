@@ -11,10 +11,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Root of mcp-server is __dirname / .. (when compiled in dist/)
-const mcpServerRoot = path.resolve(__dirname, '..');
-const serverIndexPath = path.join(mcpServerRoot, 'dist', 'index.js').replace(/\\/g, '/');
+export const mcpServerRoot = path.resolve(__dirname, '..');
+export const serverIndexPath = path.join(mcpServerRoot, 'dist', 'index.js').replace(/\\/g, '/');
 
-const tools = [
+export const tools = [
   {
     name: 'get_agent_quotas',
     description:
@@ -53,7 +53,158 @@ const tools = [
   },
 ];
 
-function registerAntigravityGlobal(home: string, serverPath: string) {
+// Node executables shipped inside these directories are replaced on every Codex
+// update (the folder name is a per-build hash), so baking one into config.toml
+// leaves a dangling `command` the next time Codex updates.
+const VOLATILE_NODE_MARKERS = [path.join('OpenAI', 'Codex', 'runtimes'), 'cua_node', path.join('hermes', 'tmp')];
+
+export function isVolatileNodePath(candidate: string): boolean {
+  const normalized = candidate.replace(/\//g, '\\').toLowerCase();
+  return VOLATILE_NODE_MARKERS.some((marker) => normalized.includes(marker.toLowerCase()));
+}
+
+// Look for a durable `node` on PATH, skipping the volatile Codex runtime dirs.
+export function findStableNodeOnPath(env: NodeJS.ProcessEnv = process.env): string | null {
+  const rawPath = env.PATH || (env as Record<string, string | undefined>).Path || '';
+  if (!rawPath) return null;
+  const exts = process.platform === 'win32' ? ['.exe', '', '.cmd'] : [''];
+  for (const dir of rawPath.split(path.delimiter)) {
+    if (!dir || isVolatileNodePath(dir)) continue;
+    for (const ext of exts) {
+      const candidate = path.join(dir, `node${ext}`);
+      try {
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+          return candidate;
+        }
+      } catch {
+        // ignore unreadable PATH entry
+      }
+    }
+  }
+  return null;
+}
+
+export function resolveNodePath(env: NodeJS.ProcessEnv = process.env): string {
+  const custom = env.CODEX_MCP_NODE_PATH;
+  if (custom && custom.trim().length > 0) {
+    const trimmed = custom.trim();
+    try {
+      if (fs.existsSync(trimmed)) {
+        const stat = fs.statSync(trimmed);
+        if (stat.isFile()) {
+          return trimmed;
+        }
+      }
+    } catch {
+      // Fall through to the PATH scan / process.execPath
+    }
+  }
+
+  // Prefer a stable node on PATH over process.execPath, which — when this script
+  // is run by Codex's bundled node — points at a per-update runtime folder.
+  const stable = findStableNodeOnPath(env);
+  if (stable) return stable;
+
+  if (isVolatileNodePath(process.execPath)) {
+    console.warn(
+      `[WARN] Falling back to a volatile Node path (${process.execPath}). ` +
+        'Set CODEX_MCP_NODE_PATH to a durable node.exe and re-run register, or the MCP server will break on the next Codex update.'
+    );
+  }
+  return process.execPath;
+}
+
+export interface TomlSection {
+  header: string | null;
+  rawTableName: string | null;
+  lines: string[];
+}
+
+export function splitTomlSections(content: string): TomlSection[] {
+  const lines = content.split(/\r?\n/);
+  const sections: TomlSection[] = [];
+  let currentSection: TomlSection = {
+    header: null,
+    rawTableName: null,
+    lines: [],
+  };
+
+  const headerRegex = /^\s*\[(\[?)([^[\]]+)(\]?)\s*\]\s*(?:#.*)?$/;
+
+  for (const line of lines) {
+    const match = line.match(headerRegex);
+    if (match) {
+      if (currentSection.header !== null || currentSection.lines.length > 0) {
+        sections.push(currentSection);
+      }
+      currentSection = {
+        header: line,
+        rawTableName: match[2].trim(),
+        lines: [line],
+      };
+    } else {
+      currentSection.lines.push(line);
+    }
+  }
+
+  if (currentSection.header !== null || currentSection.lines.length > 0) {
+    sections.push(currentSection);
+  }
+
+  return sections;
+}
+
+export function isDelegationSection(rawName: string | null): boolean {
+  if (!rawName) return false;
+  const unquoted = rawName.replace(/"/g, '').trim();
+  return (
+    unquoted === 'mcp_servers.agent_delegation' ||
+    unquoted.startsWith('mcp_servers.agent_delegation.') ||
+    unquoted === 'mcp_servers.agent-delegation' ||
+    unquoted.startsWith('mcp_servers.agent-delegation.')
+  );
+}
+
+export function buildCodexTomlSection(nodePath: string, serverPath: string): string {
+  const nodeToml = JSON.stringify(nodePath);
+  const serverToml = JSON.stringify(serverPath);
+  return `[mcp_servers.agent_delegation]\ncommand = ${nodeToml}\nargs = [${serverToml}]`;
+}
+
+export function updateCodexToml(
+  content: string,
+  nodePath: string,
+  serverPath: string
+): string {
+  const sections = splitTomlSections(content);
+  const delegationBlock = buildCodexTomlSection(nodePath, serverPath);
+
+  let placed = false;
+  const resultSections: string[] = [];
+
+  for (const section of sections) {
+    if (isDelegationSection(section.rawTableName)) {
+      if (!placed) {
+        resultSections.push(delegationBlock);
+        placed = true;
+      }
+      continue;
+    }
+
+    const text = section.lines.join('\n').trim();
+    if (text.length > 0) {
+      resultSections.push(text);
+    }
+  }
+
+  if (!placed) {
+    resultSections.push(delegationBlock);
+  }
+
+  return resultSections.join('\n\n') + '\n';
+}
+
+export function registerAntigravityGlobal(home: string, serverPath: string, nodePath: string = resolveNodePath()) {
   const configPath = path.join(home, '.gemini', 'config', 'mcp_config.json');
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   let config: any = { mcpServers: {} };
@@ -66,14 +217,14 @@ function registerAntigravityGlobal(home: string, serverPath: string) {
     }
   }
   config.mcpServers['agent-delegation'] = {
-    command: 'node',
+    command: nodePath,
     args: [serverPath],
   };
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
   console.log(`[OK] Antigravity Global MCP: ${configPath}`);
 }
 
-function registerAntigravitySchemas(home: string) {
+export function registerAntigravitySchemas(home: string) {
   const mcpDir = path.join(home, '.gemini', 'antigravity', 'mcp', 'agent-delegation');
   fs.mkdirSync(mcpDir, { recursive: true });
 
@@ -112,7 +263,7 @@ Standard Model Context Protocol (MCP) tool suite for subagent delegation and quo
   console.log(`[OK] Antigravity Tool Schemas: ${mcpDir}`);
 }
 
-function registerAntigravityUserSettings(appdata: string, serverPath: string) {
+export function registerAntigravityUserSettings(appdata: string, serverPath: string, nodePath: string = resolveNodePath()) {
   const settingsPath = path.join(appdata, 'Antigravity', 'User', 'settings.json');
   if (fs.existsSync(path.dirname(settingsPath))) {
     let settings: any = {};
@@ -123,7 +274,7 @@ function registerAntigravityUserSettings(appdata: string, serverPath: string) {
     }
     if (!settings['mcp.servers']) settings['mcp.servers'] = {};
     settings['mcp.servers']['agent-delegation'] = {
-      command: 'node',
+      command: nodePath,
       args: [serverPath],
     };
     fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 4), 'utf8');
@@ -131,7 +282,7 @@ function registerAntigravityUserSettings(appdata: string, serverPath: string) {
   }
 }
 
-function registerClaudeDesktop(appdata: string, serverPath: string) {
+export function registerClaudeDesktop(appdata: string, serverPath: string, nodePath: string = resolveNodePath()) {
   const configPath = path.join(appdata, 'Claude', 'claude_desktop_config.json');
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   let config: any = { mcpServers: {} };
@@ -144,21 +295,21 @@ function registerClaudeDesktop(appdata: string, serverPath: string) {
     }
   }
   config.mcpServers['agent-delegation'] = {
-    command: 'node',
+    command: nodePath,
     args: [serverPath],
   };
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
   console.log(`[OK] Claude Desktop: ${configPath}`);
 }
 
-function registerClaudeCli(home: string, serverPath: string) {
+export function registerClaudeCli(home: string, serverPath: string, nodePath: string = resolveNodePath()) {
   const configPath = path.join(home, '.claude.json');
   if (fs.existsSync(configPath)) {
     try {
       const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       if (!config.mcpServers) config.mcpServers = {};
       config.mcpServers['agent-delegation'] = {
-        command: 'node',
+        command: nodePath,
         args: [serverPath],
       };
       fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
@@ -169,38 +320,32 @@ function registerClaudeCli(home: string, serverPath: string) {
   }
 }
 
-function registerCodex(home: string, serverPath: string) {
+export function registerCodex(home: string, serverPath: string, nodePath: string = resolveNodePath()) {
   const configPath = path.join(home, '.codex', 'config.toml');
   if (fs.existsSync(configPath)) {
-    let content = fs.readFileSync(configPath, 'utf8');
-    const sectionHeader = '[mcp_servers.agent_delegation]';
-    const escapedPath = serverPath.replace(/\\/g, '\\\\');
-    const tomlBlock = `[mcp_servers.agent_delegation]\ncommand = "node"\nargs = ["${escapedPath}"]\n`;
-
-    if (content.includes(sectionHeader)) {
-      const regex = /\[mcp_servers\.agent_delegation\][\s\S]*?(?=\n\[|\n*$)/;
-      content = content.replace(regex, tomlBlock.trimEnd());
-    } else {
-      content = content.trimEnd() + '\n\n' + tomlBlock;
+    const original = fs.readFileSync(configPath, 'utf8');
+    const updated = updateCodexToml(original, nodePath, serverPath);
+    if (updated !== original) {
+      fs.writeFileSync(configPath, updated, 'utf8');
     }
-    fs.writeFileSync(configPath, content, 'utf8');
     console.log(`[OK] Codex CLI: ${configPath}`);
   }
 }
 
-export function registerAll() {
+export function registerAll(nodePath: string = resolveNodePath()) {
   const home = os.homedir();
   const appdata = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
 
   console.log('=== Registering Agent Delegation MCP Server ===');
+  console.log(`Node Path:   ${nodePath}`);
   console.log(`Server Path: ${serverIndexPath}\n`);
 
-  registerAntigravityGlobal(home, serverIndexPath);
+  registerAntigravityGlobal(home, serverIndexPath, nodePath);
   registerAntigravitySchemas(home);
-  registerAntigravityUserSettings(appdata, serverIndexPath);
-  registerClaudeDesktop(appdata, serverIndexPath);
-  registerClaudeCli(home, serverIndexPath);
-  registerCodex(home, serverIndexPath);
+  registerAntigravityUserSettings(appdata, serverIndexPath, nodePath);
+  registerClaudeDesktop(appdata, serverIndexPath, nodePath);
+  registerClaudeCli(home, serverIndexPath, nodePath);
+  registerCodex(home, serverIndexPath, nodePath);
 
   console.log('\n=== All AI Client Registrations Complete! ===');
 }

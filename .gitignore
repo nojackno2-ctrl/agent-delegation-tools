@@ -1,3 +1,4 @@
 agent-delegation-workspace/
 mcp-server/node_modules/
 mcp-server/dist/
+.pnpm-store/

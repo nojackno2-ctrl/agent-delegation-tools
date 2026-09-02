@@ -34,7 +34,8 @@
 - **兩個外部 CLI 承擔主要負載。** `claude` 後端花的是和父代理同一份訂閱額度，只省 context 不省額度，因此自動路由永不選它；只有使用者指名、或 AGY 與 Codex 都耗盡時才會用到。
 - **額度決定路由。** `balance_quota` 預設開啟，派工前讀三個 CLI 的即時額度（10 秒快取），耗盡者自動跳過並轉移。
 - **子代理預設就有寫入權限。** `sandbox` 預設 `workspace-write`，子代理在 `work_dir` 底下直接讀寫檔案，沒有任何核准步驟；純分析才傳 `read-only`。
-- **沙盒透過主機 MCP bridge 使用外部 CLI。** `CodexSandboxOffline` 不直接繼承主機登入憑證；`invoke_*`、`delegate_*` 與 `get_agent_quotas` 由主機側 MCP Server 啟動已登入的 CLI。禁止把 `auth.json`、OAuth token 或其他憑證複製進 workspace／temp 來繞過身分隔離。
+- **MCP 優先發現與單一命名空間**：在 Codex 及所有支援環境中，一律優先搜尋 deferred/lazy 工具（`get_agent_quotas`、`delegate_task`、`delegate_parallel`、`invoke_agy`、`invoke_codex`、`invoke_claude`，包含 `ALL_TOOLS` / tool search），使用單一 canonical `agent_delegation` 命名空間。唯有確認無 MCP 連接時才 fallback 至 PowerShell 腳本。
+- **沙盒透過主機 MCP bridge 使用外部 CLI。** `CodexSandboxOffline` 不直接繼承主機登入憑證；`invoke_*`、`delegate_*` 與 `get_agent_quotas` 由主機側 MCP Server 啟動已登入的 CLI。禁止把 `auth.json`、OAuth token 或其他憑證複製進 workspace／temp 來繞過身分隔離。在沙盒內執行 `codex mcp list` 僅讀取沙箱環境目錄，無法診斷 Desktop 主機註冊表，切勿將其誤判為 MCP 斷線。
 
 MCP Server 會在連線時把這份政策以 `instructions` 送給客戶端，因此任何接上的代理都會依此行為。
 
@@ -123,6 +124,15 @@ npm run build
     }
   }
 }
+```
+
+#### 🅴 OpenAI Codex CLI (`~/.codex/config.toml`)
+
+單一 Canonical 表名為 `[mcp_servers.agent_delegation]`，使用絕對 Node 路徑（支援 `CODEX_MCP_NODE_PATH` 覆寫）：
+```toml
+[mcp_servers.agent_delegation]
+command = "C:\\Program Files\\nodejs\\node.exe"
+args = ["C:/離線儲存/程式設計/子代理/mcp-server/dist/index.js"]
 ```
 
 ---
