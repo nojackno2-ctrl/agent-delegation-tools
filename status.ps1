@@ -597,7 +597,7 @@ function Get-AgyStatus {
             '--mode', 'plan',
             '--output-format', 'text',
             '--print-timeout', "${boundedTimeout}s",
-            '--model', 'gemini-3.7-flash',
+            '--model', 'gemini-3.8-flash',
             '--effort', 'low'
         )
 

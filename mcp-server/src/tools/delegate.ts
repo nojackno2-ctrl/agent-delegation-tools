@@ -13,7 +13,7 @@ export const delegateTaskSchema = z.object({
     .optional()
     .default('implementation')
     .describe(
-      'Task type guiding routing and model defaults: analysis/scaffolding -> AGY (Gemini 3.7 Flash high), implementation/review -> Codex (GPT-5.6-Luna high). The Claude CLI is never auto-selected because it spends the parent agent\'s own subscription quota.'
+      'Task type guiding routing and model defaults: analysis/scaffolding -> AGY (Gemini 3.8 Flash medium), implementation/review -> Codex (GPT-6-Luna medium). The Claude CLI is never auto-selected because it spends the parent agent\'s own subscription quota.'
     ),
   sandbox: z
     .enum(['read-only', 'workspace-write', 'danger-full-access'])
@@ -43,11 +43,11 @@ export const delegateTaskSchema = z.object({
   agy_model: z
     .string()
     .optional()
-    .describe('Model override for Antigravity. Default gemini-3.7-flash; use gemini-3.1-pro for deep architecture work.'),
+    .describe('Model override for Antigravity. Default gemini-3.8-flash; use gemini-3.1-pro for deep architecture work.'),
   agy_effort: z
     .enum(['low', 'medium', 'high'])
     .optional()
-    .describe('Reasoning effort for Antigravity. Default high.'),
+    .describe('Reasoning effort for Antigravity. Default medium.'),
   claude_model: z
     .string()
     .optional()
@@ -55,15 +55,15 @@ export const delegateTaskSchema = z.object({
   claude_effort: z
     .string()
     .optional()
-    .describe('Reasoning effort for the Claude CLI subagent. Default high.'),
+    .describe('Reasoning effort for the Claude CLI subagent. Default medium.'),
   codex_model: z
     .string()
     .optional()
-    .describe('Model override for the Codex CLI subagent. Default gpt-5.6-luna.'),
+    .describe('Model override for the Codex CLI subagent. Default gpt-6-luna.'),
   codex_effort: z
     .string()
     .optional()
-    .describe('Reasoning effort for the Codex CLI subagent. Default high.'),
+    .describe('Reasoning effort for the Codex CLI subagent. Default medium.'),
   timeout_sec: z
     .number()
     .int()

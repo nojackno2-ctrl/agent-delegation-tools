@@ -18,12 +18,12 @@ export const invokeAgySchema = z.object({
     .string()
     .optional()
     .default(DEFAULT_MODELS.agy.model)
-    .describe('Model name. Defaults to gemini-3.7-flash; gemini-3.1-pro for deep architecture work.'),
+    .describe('Model name. Defaults to gemini-3.8-flash; gemini-3.1-pro for deep architecture work.'),
   effort: z
     .enum(['low', 'medium', 'high'])
     .optional()
     .default(DEFAULT_MODELS.agy.effort)
-    .describe('Thinking effort. Defaults to high.'),
+    .describe('Thinking effort. Defaults to medium.'),
   work_dir: z.string().optional().describe('Working directory.'),
   timeout_sec: z.number().int().min(10).max(3600).optional().default(900),
 });
@@ -69,12 +69,12 @@ export const invokeCodexSchema = z.object({
     .string()
     .optional()
     .default(DEFAULT_MODELS.codex.model)
-    .describe('Model for Codex CLI. Defaults to gpt-5.6-luna.'),
+    .describe('Model for Codex CLI. Defaults to gpt-6-luna.'),
   effort: z
     .string()
     .optional()
     .default(DEFAULT_MODELS.codex.effort)
-    .describe('Reasoning effort (low|medium|high|xhigh|max). Defaults to high.'),
+    .describe('Reasoning effort (low|medium|high|xhigh|max). Defaults to medium.'),
   work_dir: z.string().optional().describe('Working directory.'),
   timeout_sec: z.number().int().min(10).max(3600).optional().default(900),
 });
@@ -130,7 +130,7 @@ export const invokeClaudeSchema = z.object({
     .string()
     .optional()
     .default(DEFAULT_MODELS.claude.effort)
-    .describe('Effort level (low|medium|high|xhigh|max). Defaults to high.'),
+    .describe('Effort level (low|medium|high|xhigh|max). Defaults to medium.'),
   session_id: z.string().optional().describe('Resume or fork a previous session ID.'),
   resume: z.boolean().optional().describe('Resume the session specified by session_id.'),
   work_dir: z.string().optional().describe('Working directory.'),

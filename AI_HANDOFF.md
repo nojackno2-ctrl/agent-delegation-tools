@@ -1,5 +1,80 @@
 # AI handoff
 
+## 2026-09-25 Migrate Active Codex Model Default from GPT-5.6 to GPT-6 (gpt-6-luna)
+
+- **Objective**: Migrated all active OpenAI Codex subagent defaults from `gpt-5.6-luna` to `gpt-6-luna` across MCP server defaults, tool descriptions, PowerShell dispatchers, and documentation, preserving reasoning effort `medium` and other providers (`gemini-3.8-flash`, `claude-sonnet-5`).
+- **Changes**:
+  - `mcp-server/src/core/defaults.ts`: Updated `DEFAULT_MODELS.codex` to `{ model: 'gpt-6-luna', effort: 'medium' }`.
+  - `mcp-server/src/index.ts`: Updated `DELEGATION_POLICY` instruction string, `delegate_task` description (`GPT-6-Luna`), and `invoke_codex` description (`gpt-6-luna`, effort medium).
+  - `mcp-server/src/register.ts`: Updated `delegate_task` description (`GPT-6-Luna`) and `invoke_codex` description (`gpt-6-luna`, effort medium).
+  - `mcp-server/src/tools/delegate.ts`: Updated `delegateTaskSchema` task_type routing description (`Codex (GPT-6-Luna medium)`) and `codex_model` parameter description (`Default gpt-6-luna.`).
+  - `mcp-server/src/tools/invokers.ts`: Updated `invokeCodexSchema` model description (`Defaults to gpt-6-luna.`).
+  - `delegate.ps1` and `skills/agent-delegation-tools/scripts/delegate.ps1`: Updated `$script:DefaultBackendModel['codex']` to `'gpt-6-luna'` (both copies remain byte-identical).
+  - `CLAUDE.md`: Updated Codex row in default matrix to `gpt-6-luna` with `medium` effort.
+  - `README.md`: Updated Codex row in backend capability table to `gpt-6-luna` + effort `medium`.
+  - Canonical `skills/agent-delegation-tools/SKILL.md` and tracked `.agents` / `.claude` copies: Updated table and worker examples to `gpt-6-luna` while maintaining 100% SHA-256 parity.
+  - `mcp-server/src/tests/defaults.test.ts`: Updated assertions to expect `DEFAULT_MODELS.codex.model === 'gpt-6-luna'` at medium effort.
+  - `mcp-server/src/tests/register.test.ts`: Deliberately kept historical `gpt-5.6-luna` TOML fixture tests untouched to verify preservation of user-level configuration.
+- **Verification**:
+  - `npm run build` in `mcp-server`: Clean TypeScript build, zero errors.
+  - `npm test` in `mcp-server`: 56/56 tests passed (7 suites).
+  - `validate.ps1`: 49 Pass, 0 Fail, 4 Skip (AST parsing, root wrapper SHA-256 parity, and SKILL.md parity all passed).
+  - Existing uncommitted working copy modifications were strictly preserved; no commits or pushes performed; global installed copies left untouched.
+  - Follow-up review corrected stale `high` effort labels in MCP tool descriptions and all three skill tables to the actual `medium` defaults. Rebuilt and reran `npm test`: 56/56 passed; `git diff --check` passed. The Codex config points both `agent_delegation` and legacy `agent-delegation` registrations at this repository's `mcp-server/dist/index.js`; a fresh MCP connection is needed for tool descriptions in an existing session to refresh.
+
+## 2026-09-15 Fix: subagents could not do real work (MCP timeout + AGY had no workspace)
+
+- **Symptom**: trivial delegations succeeded, but any realistic task failed. `delegate_parallel` with two small read-only analysis prompts returned `Error: Request timed out`; a single AGY analysis with a repo-relative path ran 294s and returned only preamble ("searching for the file across the drives").
+- **Root cause 1 (all backends)**: tool calls were synchronous. The MCP client aborts `tools/call` after its request timeout (TS SDK `DEFAULT_REQUEST_TIMEOUT_MSEC = 60000`), and the server sent no progress, so any subagent turn over ~60s was lost to the host while the child kept running.
+- **Root cause 2 (AGY)**: `agy` does not treat its cwd as a workspace. Direct probe from this repo: without `--add-dir` it answered `NOTFOUND (No active workspace)`; with `--add-dir <work_dir>` it read `mcp-server/package.json` correctly in 6s. Both the TS invoker and `agy.ps1` only forwarded extra `AddDir`s, never the work dir.
+- **Root cause 3 (AGY)**: the TS invoker hardcoded `--print-timeout 5m`, so AGY truncated at 5 minutes regardless of `timeout_sec` (the 294s run).
+- **Changes**:
+  - New `mcp-server/src/services/jobs/job-store.ts`: in-memory background jobs. `delegate_task`, `delegate_parallel`, `invoke_agy/codex/claude` now run as jobs; each call waits `wait_sec` (default 45, max 50) and either returns the result or `[Job <id> still running]`. Progress notifications are sent while waiting when the client supplies a progress token.
+  - `mcp-server/src/index.ts`: new `get_delegation_result` tool (wait/collect by `job_id`; no id lists jobs); `wait_sec` added to the long-running tool schemas; server instructions rule 7 tells hosts to poll instead of re-submitting.
+  - `agy-invoker.ts`: always passes `work_dir` (resolved) as the first `--add-dir`; `--print-timeout` follows `timeout_sec`; process kill timer gets +30s so AGY flushes output first.
+  - `agy.ps1` (root + canonical, still byte-identical): always prepends `$resolvedWorkDir` as `--add-dir`. `tests/agy-wrapper.Tests.ps1` updated to assert work dir then extra dir.
+  - New `mcp-server/src/tests/job-store.test.ts` (5 tests).
+- **Verification**: `npm test` 56/56; `tests/agy-wrapper.Tests.ps1` passed; `validate.ps1` Pass 49 / Fail 0 / Skip 4. End-to-end with a real stdio MCP client against the rebuilt `dist/index.js`: before the AGY fix the job mechanism delivered a 297s result via 6 polls (proving the timeout path), but the output was wrong; after the fix the same prompt returned a correct, line-referenced answer in 16s.
+- **Not done**: the already-running MCP server processes in host apps still hold the old build and must be restarted; jobs are in-memory, so a server restart forgets unfinished job ids (the child CLI may still finish its edits). Global skill installs were not re-synced (`sync.ps1 -InstallGlobal`). Codex quota query currently fails with a network error to `chatgpt.com/backend-api/wham/usage` and the Claude CLI OAuth token is expired; both are environment issues, not code, and codex delegation itself still succeeded.
+
+## 2026-09-06 Lower default subagent reasoning effort to medium
+
+- **Objective**: User requested all subagent thinking levels default to `medium` instead of `high`.
+- **Changes**:
+  - `mcp-server/src/core/defaults.ts`: `DEFAULT_MODELS.{agy,codex,claude}.effort` -> `medium` (models unchanged).
+  - `mcp-server/src/tools/invokers.ts`, `mcp-server/src/tools/delegate.ts`: schema `.describe()` text now says "Defaults to medium" / "Default medium.".
+  - `mcp-server/src/index.ts`, `mcp-server/src/register.ts`: MCP server instructions and tool descriptions now advertise effort medium.
+  - `delegate.ps1` and `skills/agent-delegation-tools/scripts/delegate.ps1`: dispatcher default effort map -> medium for all three backends.
+  - Docs: `CLAUDE.md` default matrix, `README.md` backend table, and the three `SKILL.md` copies (`skills/`, `.agents/`, `.claude/`) examples -> medium.
+  - `mcp-server/src/tests/defaults.test.ts`: assertions updated to medium.
+- **Deliberately unchanged**: `ValidateSet`/zod enums still accept low|medium|high (and xhigh/max where applicable); alias normalization (`gemini-*-flash-high`, `-thinking`) still maps to its explicit effort; `agy.ps1`'s own no-effort fallback stays `low` (dispatcher always passes an explicit effort).
+- **Verification**: `npm run build` clean; `npm test` 51/51 pass; `mcp-server/dist/core/defaults.js` confirms medium in the emitted output.
+
+## 2026-09-04 Update AGY Default Model to Gemini 3.8 Flash High
+
+- **Objective**: Upgraded Google Antigravity (AGY) subagent default model and alias normalization from `gemini-3.7-flash` to `gemini-3.8-flash` (Gemini 3.8 Flash High) across the native TypeScript MCP server, PowerShell scripts, canonical files, and documentation.
+- **Root cause / Context**: User requested setting the AGY subagent model to Gemini 3.8 Flash High. Verified via `agy models` that Antigravity provides `gemini-3.8-flash-high`, `gemini-3.8-flash-medium`, `gemini-3.8-flash-low`, and confirmed that `gemini-3.8-flash` requires `--effort` (`high`/`medium`/`low`).
+- **Changes**:
+  - `mcp-server/src/core/defaults.ts`: Updated `DEFAULT_MODELS.agy` to `{ model: 'gemini-3.8-flash', effort: 'high' }`.
+  - `mcp-server/src/services/invokers/agy-invoker.ts`: Expanded regex alias normalization to match `gemini-3.8-flash`, `gemini-3.8-flash-(high|medium|low)`, `Gemini 3.8 Flash (High|Medium|Low)`, `gemini-3.8-flash-thinking`, and plain flash models.
+  - `mcp-server/src/services/quota/agy-quota.ts`: Updated `/usage` query model parameter to `gemini-3.8-flash`.
+  - `mcp-server/src/tools/delegate.ts` & `mcp-server/src/tools/invokers.ts`: Updated tool descriptions to reflect `gemini-3.8-flash` high.
+  - `mcp-server/src/index.ts` & `mcp-server/src/register.ts`: Updated server instructions and MCP schemas to Gemini 3.8 Flash high.
+  - `mcp-server/src/tests/defaults.test.ts`: Updated assertion for AGY default model to `gemini-3.8-flash`.
+  - `skills/agent-delegation-tools/scripts/agy.ps1`: Added alias normalization and auto-effort defaulting for `gemini-3.8-flash` variants.
+  - `skills/agent-delegation-tools/scripts/delegate.ps1`: Updated `$script:DefaultBackendModel['agy']` to `'gemini-3.8-flash'`.
+  - `skills/agent-delegation-tools/scripts/status.ps1`: Updated `/usage` model parameter to `gemini-3.8-flash`.
+  - `tests/agy-wrapper.Tests.ps1`: Added tests for `gemini-3.8-flash` explicit effort, auto-default effort, and parenthesized effort formatting.
+  - `skills/agent-delegation-tools/SKILL.md`, `README.md`, `CLAUDE.md`: Updated model tables, examples, and descriptions.
+- **Synchronization & Registrations**:
+  - Rebuilt `mcp-server` (`npm.cmd run build`) and registered across all 6 host configs (`node dist/register.js`).
+  - Ran `sync.ps1 -InstallGlobal` to synchronize canonical scripts to repo root, in-repo host directories (`.agents`, `.claude`), and user global skill directories (`~/.agents`, `~/.claude`, `~/.codex`).
+- **Verification**:
+  - Native TypeScript test suite: 51/51 tests passed (`npm.cmd test`).
+  - AST parse & SHA-256 parity: 52/52 passed, 1 intentional skip (`validate.ps1`).
+  - Pester suites: 7/7 suites passed (`agy-wrapper`, `claude-wrapper`, `codex-wrapper`, `delegate-wrapper`, `install`, `parallel`, `status`).
+  - Live AGY probe: verified non-interactive invocation using `gemini-3.8-flash` high effort.
+
 ## 2026-08-28 Stable Node path for MCP registration (fix dead host bridge)
 
 - **Symptom**: From Codex, delegated `agy` / `claude` subagents reported "not logged in" even though both CLIs are authenticated in the terminal. Root cause was two-layered: (1) the `agent_delegation` MCP server would not start at all, so work fell back to in-`CodexSandboxOffline` PowerShell wrappers where `USERPROFILE`/`APPDATA` are remapped and the credential files (`~/.claude/.credentials.json`, `~/.gemini`, the live Antigravity language server) are invisible; (2) the reason the server would not start: all five host registrations (`~/.codex/config.toml`, `~/.claude.json`, Claude Desktop, `~/.gemini/config/mcp_config.json`, Antigravity `User/settings.json`) had `command` pointing at `…\OpenAI\Codex\runtimes\cua_node\57937f104cca4dc5\bin\node.exe`, a per-Codex-update runtime folder that was replaced by `759ccb73c5d75f83` on the 2026-08-28 Codex update. `resolveNodePath()` had baked that path in because the last `npm run register` ran under Codex's bundled node and fell straight through to `process.execPath`.

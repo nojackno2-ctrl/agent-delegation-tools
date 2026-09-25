@@ -6,9 +6,9 @@
 
 | 後端 | CLI | 預設模型 | 預設 effort |
 |------|-----|----------|-------------|
-| `agy` | Google Antigravity | `gemini-3.7-flash` | `high` |
-| `codex` | OpenAI Codex | `gpt-5.6-luna` | `high` |
-| `claude` | Anthropic Claude CLI | `claude-sonnet-5` | `high` |
+| `agy` | Google Antigravity | `gemini-3.8-flash` | `medium` |
+| `codex` | OpenAI Codex | `gpt-6-luna` | `medium` |
+| `claude` | Anthropic Claude CLI | `claude-sonnet-5` | `medium` |
 
 除非使用者指定，一律使用上表的預設值，不要在呼叫時另外指定模型。
 

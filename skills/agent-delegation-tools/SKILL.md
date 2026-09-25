@@ -30,9 +30,9 @@ Unless the user names a different model, delegate with these and do not override
 
 | Backend | Model | Effort |
 |---|---|---|
-| Antigravity (AGY) | `gemini-3.7-flash` | `high` |
-| Codex CLI | `gpt-5.6-luna` | `high` |
-| Claude CLI | `claude-sonnet-5` | `high` |
+| Antigravity (AGY) | `gemini-3.8-flash` | `medium` |
+| Codex CLI | `gpt-6-luna` | `medium` |
+| Claude CLI | `claude-sonnet-5` | `medium` |
 
 The `agent-delegation` MCP server applies these same defaults automatically, so `delegate_task` / `invoke_*` calls need no model arguments. Prefer the MCP tools when they are connected; the PowerShell wrappers below are the fallback path.
 
@@ -97,7 +97,7 @@ When the parent runs under `CodexSandboxOffline`, invoke external CLIs and quota
 ### Quota-Aware Load Balancing Rule
 
 - When a provider has `<= 10%` remaining quota or is in an `unavailable`/rate-limited state, **do not route new tasks to it**.
-- Instead, route to the healthiest provider (e.g. AGY Gemini 3.7 Flash or AGY Claude / GPT) and specify fallback chains.
+- Instead, route to the healthiest provider (e.g. AGY Gemini 3.8 Flash or AGY Claude / GPT) and specify fallback chains.
 - Pass `-BalanceQuota` to `delegate.ps1` to perform automated quota balancing across backends.
 
 ## Choose child settings and backend
@@ -115,18 +115,18 @@ When the parent runs under `CodexSandboxOffline`, invoke external CLIs and quota
 ```powershell
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'agy.ps1') `
     -WorkDir 'C:\path\to\project' -Mode workspace-write -SkipPermissions `
-    -Model 'gemini-3.7-flash' -Effort high `
+    -Model 'gemini-3.8-flash' -Effort medium `
     -OutFile "$env:TEMP\agy-worker.txt" `
     'Implement the authentication middleware in src/auth.ts and update tests.'
 ```
 
-Use `gemini-3.7-flash` (with `-Effort low|medium|high`, `gemini-3.7-flash-high`, or `gemini-3.7-flash-low`) for fast scaffolding, implementation, or deep reasoning plans. Use `-SkipPermissions` with write modes so headless runs do not block on terminal prompts. AGY enforces `-PrintTimeout` itself.
+Use `gemini-3.8-flash` (with `-Effort low|medium|high`, `gemini-3.8-flash-high`, or `gemini-3.8-flash-low`) for fast scaffolding, implementation, or deep reasoning plans. Use `-SkipPermissions` with write modes so headless runs do not block on terminal prompts. AGY enforces `-PrintTimeout` itself.
 
 ### Codex CLI worker (Implementation / File Modification)
 
 ```powershell
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'codex.ps1') `
-    -WorkDir 'C:\path\to\project' -Sandbox workspace-write -Model 'gpt-5.6-luna' -Effort high `
+    -WorkDir 'C:\path\to\project' -Sandbox workspace-write -Model 'gpt-6-luna' -Effort medium `
     -ApproveForMe -Ephemeral -TimeoutSec 900 -OutFile "$env:TEMP\codex-worker.txt" `
     'Refactor the database repository in src/db.ts to use connection pooling.'
 ```
@@ -138,7 +138,7 @@ Use `-AddDir` for extra workspaces. The wrapper gives non-ASCII paths collision-
 ```powershell
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'claude.ps1') `
     -WorkDir 'C:\path\to\project' -Mode workspace-write -Context isolated `
-    -Model 'claude-sonnet-5' -Effort high -OutFile "$env:TEMP\claude-worker.txt" `
+    -Model 'claude-sonnet-5' -Effort medium -OutFile "$env:TEMP\claude-worker.txt" `
     'Add input sanitization to src/routes.ts and verify error handling.'
 ```
 
@@ -150,8 +150,8 @@ The wrapper sends the prompt through UTF-8 stdin, disables prompt suggestions, a
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'delegate.ps1') `
     -TaskType implementation -Sandbox workspace-write -BalanceQuota `
     -WorkDir 'C:\path\to\project' -TimeoutSec 900 `
-    -AgyModel 'gemini-3.7-flash' -AgyEffort high -CodexModel 'gpt-5.6-luna' -CodexEffort high `
-    -ClaudeModel 'claude-sonnet-5' -ClaudeEffort high -OutFile "$env:TEMP\worker.txt" `
+    -AgyModel 'gemini-3.8-flash' -AgyEffort medium -CodexModel 'gpt-6-luna' -CodexEffort medium `
+    -ClaudeModel 'claude-sonnet-5' -ClaudeEffort medium -OutFile "$env:TEMP\worker.txt" `
     'Implement the requested feature in src/service.ts and verify tests pass.'
 ```
 
@@ -175,7 +175,7 @@ Create a UTF-8 JSON task file. Each object accepts dispatcher settings plus `nam
     "sandbox": "workspace-write",
     "balanceQuota": true,
     "writeScope": ["src/api", "tests/api"],
-    "agyEffort": "high"
+    "agyEffort": "medium"
   },
   {
     "name": "docs-update",

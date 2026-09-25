@@ -10,9 +10,9 @@ import { AgentName, SandboxMode } from './types.js';
 
 /** Default model + reasoning effort per backend. Overridable per call. */
 export const DEFAULT_MODELS = {
-  agy: { model: 'gemini-3.7-flash', effort: 'high' },
-  codex: { model: 'gpt-5.6-luna', effort: 'high' },
-  claude: { model: 'claude-sonnet-5', effort: 'high' },
+  agy: { model: 'gemini-3.8-flash', effort: 'medium' },
+  codex: { model: 'gpt-6-luna', effort: 'medium' },
+  claude: { model: 'claude-sonnet-5', effort: 'medium' },
 } as const satisfies Record<AgentName, { model: string; effort: string }>;
 
 /**

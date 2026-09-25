@@ -43,16 +43,36 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
   let effectiveEffort = options.effort;
 
   // Normalize model and effort aliases
-  const effortMatch = effectiveModel.match(/^gemini[ -]?3\.7[ -]?flash\s*\((high|medium|low)\)$/i);
-  if (effortMatch) {
-    effectiveModel = 'gemini-3.7-flash';
-    if (!effectiveEffort) effectiveEffort = effortMatch[1].toLowerCase() as any;
+  const effortParenMatch = effectiveModel.match(/^gemini[ -]?(3\.[5678])[ -]?flash\s*\((high|medium|low)\)$/i);
+  if (effortParenMatch) {
+    effectiveModel = `gemini-${effortParenMatch[1]}-flash`;
+    if (!effectiveEffort) effectiveEffort = effortParenMatch[2].toLowerCase() as any;
+  } else {
+    const effortHyphenMatch = effectiveModel.match(/^gemini[ -]?(3\.[5678])[ -]?flash-(high|medium|low)$/i);
+    if (effortHyphenMatch) {
+      effectiveModel = `gemini-${effortHyphenMatch[1]}-flash`;
+      if (!effectiveEffort) effectiveEffort = effortHyphenMatch[2].toLowerCase() as any;
+    } else {
+      const thinkingMatch = effectiveModel.match(/^gemini[ -]?(3\.[5678])[ -]?flash-thinking$/i);
+      if (thinkingMatch) {
+        effectiveModel = `gemini-${thinkingMatch[1]}-flash`;
+        if (!effectiveEffort) effectiveEffort = 'high';
+      } else {
+        const plainFlashMatch = effectiveModel.match(/^(?:gemini[ -]?)?(3\.[5678])[ -]?flash$/i);
+        if (plainFlashMatch) {
+          effectiveModel = `gemini-${plainFlashMatch[1]}-flash`;
+        }
+      }
+    }
   }
 
   // AGY CLI rejects Flash models without --effort, so always carry one.
   if (!effectiveEffort) {
     effectiveEffort = DEFAULT_MODELS.agy.effort;
   }
+
+  const timeoutSec = options.timeoutSec || 900;
+  const workDir = path.resolve(options.workDir || process.cwd());
 
   const args: string[] = [
     '-p',
@@ -61,8 +81,10 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
     effectiveMode,
     '--output-format',
     'text',
+    // AGY's own print wait defaults to 5m and silently truncates the turn, so it
+    // must follow the caller's timeout rather than a fixed value.
     '--print-timeout',
-    '5m',
+    `${timeoutSec}s`,
   ];
 
   if (effectiveModel) args.push('--model', effectiveModel);
@@ -73,17 +95,19 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
     args.push('--dangerously-skip-permissions');
   }
 
-  if (options.addDirs) {
-    for (const d of options.addDirs) {
-      if (d) args.push('--add-dir', d);
-    }
+  // AGY does not treat its cwd as a workspace: without --add-dir it runs with
+  // "No active workspace", cannot resolve relative paths, and wanders the drives.
+  const workspaceDirs = [workDir, ...(options.addDirs || []).filter(Boolean).map((d) => path.resolve(d))];
+  for (const d of new Set(workspaceDirs)) {
+    args.push('--add-dir', d);
   }
 
-  const timeoutMs = (options.timeoutSec || 900) * 1000;
+  // Give AGY's own print timeout a head start so its output is flushed before we kill it.
+  const timeoutMs = (timeoutSec + 30) * 1000;
   const result = await spawnProcess({
     executable,
     args,
-    cwd: options.workDir || process.cwd(),
+    cwd: workDir,
     timeoutMs,
   });
 

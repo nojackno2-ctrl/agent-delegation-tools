@@ -83,7 +83,10 @@ try {
     Assert-Equal 'plan' $arguments[[Array]::IndexOf($arguments, '--mode') + 1] 'AGY must default to read-only plan mode.'
     Assert-Equal 'json' $arguments[[Array]::IndexOf($arguments, '--output-format') + 1] 'AGY output format was not forwarded.'
     Assert-Equal '7m' $arguments[[Array]::IndexOf($arguments, '--print-timeout') + 1] 'AGY print timeout was not forwarded.'
-    Assert-Equal $addDir $arguments[[Array]::IndexOf($arguments, '--add-dir') + 1] 'AGY additional directory was not forwarded.'
+    $firstAddDir = [Array]::IndexOf($arguments, '--add-dir')
+    Assert-Equal $workDir $arguments[$firstAddDir + 1] 'AGY work directory must be registered as a workspace via --add-dir.'
+    Assert-Equal '--add-dir' $arguments[$firstAddDir + 2] 'AGY additional directory flag is missing.'
+    Assert-Equal $addDir $arguments[$firstAddDir + 3] 'AGY additional directory was not forwarded.'
     Assert-Equal $workDir ([IO.File]::ReadAllText($cwdFile, [Text.Encoding]::UTF8)) 'AGY working directory was not applied.'
     Assert-Equal '1' ([IO.File]::ReadAllText($depthFile, [Text.Encoding]::UTF8)) 'AGY child should receive recursion depth 1.'
     Assert-Equal $expectedOutput ([IO.File]::ReadAllText($outFile, [Text.Encoding]::UTF8)) 'AGY output file content changed.'
@@ -133,6 +136,27 @@ try {
     $gemini37HumanArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
     Assert-Equal 'gemini-3.7-flash' $gemini37HumanArgs[[Array]::IndexOf($gemini37HumanArgs, '--model') + 1] 'Human-readable Gemini 3.7 Flash was not normalized.'
     Assert-Equal 'medium' $gemini37HumanArgs[[Array]::IndexOf($gemini37HumanArgs, '--effort') + 1] 'Parenthesized effort in model name was not parsed.'
+
+    # Test Gemini 3.8 Flash with explicit effort
+    $gemini38High = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model gemini-3.8-flash -Effort high -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $gemini38High.ExitCode ('Gemini 3.8 Flash high effort test failed: ' + ($gemini38High.Output -join [Environment]::NewLine))
+    $gemini38HighArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
+    Assert-Equal 'gemini-3.8-flash' $gemini38HighArgs[[Array]::IndexOf($gemini38HighArgs, '--model') + 1] 'Gemini 3.8 Flash model was not forwarded.'
+    Assert-Equal 'high' $gemini38HighArgs[[Array]::IndexOf($gemini38HighArgs, '--effort') + 1] 'Gemini 3.8 Flash effort high was not forwarded.'
+
+    # Test Gemini 3.8 Flash without effort (should default to low)
+    $gemini38Auto = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model gemini-3.8-flash -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $gemini38Auto.ExitCode ('Gemini 3.8 Flash auto effort test failed: ' + ($gemini38Auto.Output -join [Environment]::NewLine))
+    $gemini38AutoArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
+    Assert-Equal 'gemini-3.8-flash' $gemini38AutoArgs[[Array]::IndexOf($gemini38AutoArgs, '--model') + 1] 'Gemini 3.8 Flash model without effort failed.'
+    Assert-Equal 'low' $gemini38AutoArgs[[Array]::IndexOf($gemini38AutoArgs, '--effort') + 1] 'Gemini 3.8 Flash model should auto-default effort to low.'
+
+    # Test human-readable Gemini 3.8 Flash with parenthesized effort
+    $gemini38Human = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model "Gemini 3.8 Flash (High)" -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $gemini38Human.ExitCode ('Gemini 3.8 Flash human-readable model test failed: ' + ($gemini38Human.Output -join [Environment]::NewLine))
+    $gemini38HumanArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
+    Assert-Equal 'gemini-3.8-flash' $gemini38HumanArgs[[Array]::IndexOf($gemini38HumanArgs, '--model') + 1] 'Human-readable Gemini 3.8 Flash was not normalized.'
+    Assert-Equal 'high' $gemini38HumanArgs[[Array]::IndexOf($gemini38HumanArgs, '--effort') + 1] 'Parenthesized high effort in model name was not parsed.'
 
     'agy-wrapper.Tests.ps1: all tests passed.'
 }

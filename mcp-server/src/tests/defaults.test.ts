@@ -6,19 +6,19 @@ import { delegateTaskSchema, delegateParallelSchema } from '../tools/delegate.js
 
 describe('Delegation defaults policy', () => {
   describe('Configured models', () => {
-    it('should default AGY to Gemini 3.7 Flash at high effort', () => {
-      assert.equal(DEFAULT_MODELS.agy.model, 'gemini-3.7-flash');
-      assert.equal(DEFAULT_MODELS.agy.effort, 'high');
+    it('should default AGY to Gemini 3.8 Flash at medium effort', () => {
+      assert.equal(DEFAULT_MODELS.agy.model, 'gemini-3.8-flash');
+      assert.equal(DEFAULT_MODELS.agy.effort, 'medium');
     });
 
-    it('should default Codex to GPT-5.6-Luna at high effort', () => {
-      assert.equal(DEFAULT_MODELS.codex.model, 'gpt-5.6-luna');
-      assert.equal(DEFAULT_MODELS.codex.effort, 'high');
+    it('should default Codex to GPT-6-Luna at medium effort', () => {
+      assert.equal(DEFAULT_MODELS.codex.model, 'gpt-6-luna');
+      assert.equal(DEFAULT_MODELS.codex.effort, 'medium');
     });
 
-    it('should default Claude to Sonnet 5 at high effort', () => {
+    it('should default Claude to Sonnet 5 at medium effort', () => {
       assert.equal(DEFAULT_MODELS.claude.model, 'claude-sonnet-5');
-      assert.equal(DEFAULT_MODELS.claude.effort, 'high');
+      assert.equal(DEFAULT_MODELS.claude.effort, 'medium');
     });
   });
 

@@ -312,7 +312,7 @@ export async function getAgyQuota(options?: { timeoutSec?: number }): Promise<Ag
         '--print-timeout',
         `${boundedTimeoutSec}s`,
         '--model',
-        'gemini-3.7-flash',
+        'gemini-3.8-flash',
         '--effort',
         'low',
       ],
