@@ -8,6 +8,10 @@
 - Known open issues: reconnect hosts after rebuilding; desktop request timeouts require dispatch/poll; AGY startup/auth latency can exceed quota-read deadlines; Codex sandbox ACL setup can fail for orphaned repo ownership; read-only nested MCP calls can require approval. Only Codex workspace-write provides OS sandbox confinement; AGY/Claude write modes skip prompts.
 - Historical entries are preserved verbatim below. Older history: [docs/handoff-archive.md](docs/handoff-archive.md).
 
+## 2026-10-04 Rename attempts[].errorTail to outputTail
+
+- `DelegationAttempt.errorTail` was filled on success too (it is the stderr tail, or stdout when stderr is empty), so it was renamed `outputTail` in core/types.ts, delegate-service.ts, tools/delegate.ts (text label now "(no output)") and hardening.test.ts. Breaking for any client reading `attempts[].errorTail` from job snapshots. Verification: `npm test` 96/96 (pretest rebuilds dist), lint clean. Connected MCP hosts need a reconnect to pick it up.
+
 ## 2026-10-04 Merge origin/master (234f507) into feat/async-jobs-hardening
 
 - origin/master had gained 234f507 "background delegation job tracking" (job-store.ts + get_delegation_result, 45s inline wait, no cancellation; older model defaults gpt-6-luna/claude-sonnet-5). With explicit user approval (option 1), conflicts were resolved in favor of this branch's job-registry design (immediate job_id, get_job_status/get_job_result/cancel_job, tree-kill cancellation); job-store.ts, its test, and master's re-modified root mirrors/in-repo SKILL copies were removed.

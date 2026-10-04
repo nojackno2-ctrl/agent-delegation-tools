@@ -28,7 +28,8 @@ export interface DelegationAttempt {
   agent: AgentName;
   exitCode: number;
   durationMs: number;
-  errorTail: string;
+  /** Last ~1500 chars of stderr (or stdout when stderr is empty), on success or failure. */
+  outputTail: string;
 }
 
 export interface ExecutionResult {

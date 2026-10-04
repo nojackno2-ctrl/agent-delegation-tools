@@ -15,7 +15,7 @@ function formatAttempts(attempts?: DelegationAttempt[]): string {
     attempts
       .map(
         (a, i) =>
-          `  [Attempt ${i + 1}: ${a.agent}] Exit ${a.exitCode} (${Math.round(a.durationMs / 1000)}s):\n${a.errorTail ? `    ${a.errorTail.trim().replace(/\n/g, '\n    ')}` : '    (no error output)'}`
+          `  [Attempt ${i + 1}: ${a.agent}] Exit ${a.exitCode} (${Math.round(a.durationMs / 1000)}s):\n${a.outputTail ? `    ${a.outputTail.trim().replace(/\n/g, '\n    ')}` : '    (no output)'}`
       )
       .join('\n')
   );

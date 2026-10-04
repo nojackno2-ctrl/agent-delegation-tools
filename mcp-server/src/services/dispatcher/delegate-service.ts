@@ -167,13 +167,12 @@ export async function delegateTask(options: DelegateOptions): Promise<ExecutionR
     const logPath = writeRunLog(runId, currentAgent, res.stdout, res.stderr);
     res.logPath = logPath;
 
-    const rawError = (res.stderr && res.stderr.trim().length > 0) ? res.stderr : res.stdout;
-    const errorTail = truncateTail(rawError, 1500);
+    const rawOutput = (res.stderr && res.stderr.trim().length > 0) ? res.stderr : res.stdout;
     attempts.push({
       agent: currentAgent,
       exitCode: res.exitCode,
       durationMs: res.durationMs,
-      errorTail,
+      outputTail: truncateTail(rawOutput, 1500),
     });
 
     if (options.signal?.aborted || res.exitCode === EXIT_CODES.CANCELLED) {

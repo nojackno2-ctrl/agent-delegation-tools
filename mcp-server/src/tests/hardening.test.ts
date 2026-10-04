@@ -139,7 +139,7 @@ describe('MCP Server Hardening Specification', () => {
       const [attempt1, attempt2] = result.attempts!;
       assert.equal(attempt1.agent, 'codex');
       assert.equal(attempt1.exitCode, 10);
-      assert.match(attempt1.errorTail, /Quota exceeded for codex/);
+      assert.match(attempt1.outputTail, /Quota exceeded for codex/);
       assert.ok(attempt1.durationMs >= 0);
 
       assert.equal(attempt2.agent, 'agy');
