@@ -46,6 +46,35 @@ export function markProviderDepleted(agent: AgentName): void {
   }
 }
 
+export function markProviderUnavailable(
+  agent: AgentName,
+  availability: 'unavailable' | 'logged_out' = 'unavailable',
+  message = 'Provider configuration or authentication error.'
+): void {
+  const existing = quotaCache.get(agent);
+  if (existing) {
+    existing.report.availability = availability;
+    existing.report.message = message;
+    if (existing.report.windows) {
+      for (const w of existing.report.windows) {
+        w.remainingPercent = 0;
+        w.usedPercent = 100;
+      }
+    }
+    existing.timestamp = Date.now();
+  } else {
+    quotaCache.set(agent, {
+      report: {
+        agent,
+        availability,
+        observedAt: new Date().toISOString(),
+        message,
+        windows: [{ name: agent, remainingPercent: 0, usedPercent: 100 }],
+      },
+      timestamp: Date.now(),
+    });
+  }
+}
 
 export interface QuotaQueryOptions {
   timeoutSec?: number;
@@ -137,4 +166,3 @@ export async function getDynamicQuotaHealth(
 
   return result as Record<AgentName, ProviderHealth>;
 }
-

@@ -8,12 +8,8 @@
     user configuration or global skill install. It:
 
       1. AST-parses every Git-tracked *.ps1 file with the PowerShell language parser.
-      2. Verifies the root wrapper scripts (agy/claude/codex/delegate.ps1) are
-         byte-identical (SHA-256) to their canonical copies under
-         skills\agent-delegation-tools\scripts\.
-      3. Verifies the canonical SKILL.md matches the in-repo Antigravity (.agents) and
-         Claude Code (.claude) project copies, and, only when present on this machine,
-         the global Codex/Antigravity/Claude Code personal installs.
+      2. Verifies the canonical script package and SKILL.md are present.
+      3. Compares the manifest with personal installs when present.
       4. Spawns each wrapper as an isolated child process (never this process, so a
          wrapper's own `exit` cannot terminate the validator) to exercise, without
          ever resolving or launching a real claude/codex/agy executable:
@@ -214,7 +210,7 @@ if ($gitAvailable) {
     foreach ($relative in $trackedScripts) {
         $fullPath = Join-Path $RepoRoot $relative
         if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
-            Add-CheckResult -Category 'AST' -Name $relative -Status 'Fail' -Detail 'Tracked file is missing from the working tree.'
+            # Git's index can still list files intentionally deleted in this checkout.
             continue
         }
         $parseErrors = Test-PowerShellAst -Path $fullPath
@@ -229,31 +225,14 @@ if ($gitAvailable) {
 }
 Write-Host ''
 
-# --- 2. Root wrapper == canonical skill copy parity ----------------------------
+# --- 2. Canonical script package -------------------------------------------
 
-Write-Host '== Root wrapper parity (root *.ps1 vs skills\agent-delegation-tools\scripts\*.ps1) ==' -ForegroundColor Cyan
-$rootWrappers = @('agy.ps1', 'claude.ps1', 'codex.ps1', 'delegate.ps1', 'parallel.ps1', 'status.ps1')
-foreach ($wrapperName in $rootWrappers) {
-    $rootPath = Join-Path $RepoRoot $wrapperName
-    $canonicalPath = Join-Path $RepoRoot "skills\agent-delegation-tools\scripts\$wrapperName"
-
-    if (-not (Test-Path -LiteralPath $rootPath -PathType Leaf)) {
-        Add-CheckResult -Category 'Parity' -Name "root\$wrapperName" -Status 'Fail' -Detail 'Root wrapper is missing.'
-        continue
-    }
-    if (-not (Test-Path -LiteralPath $canonicalPath -PathType Leaf)) {
-        Add-CheckResult -Category 'Parity' -Name "root\$wrapperName" -Status 'Skip' -Detail 'No canonical counterpart under skills\agent-delegation-tools\scripts\; nothing to compare.'
-        continue
-    }
-
-    $rootHash = Get-FileHashHex -Path $rootPath
-    $canonicalHash = Get-FileHashHex -Path $canonicalPath
-    if ($rootHash -eq $canonicalHash) {
-        Add-CheckResult -Category 'Parity' -Name "root\$wrapperName" -Status 'Pass' -Detail "SHA-256 $rootHash"
-    }
-    else {
-        Add-CheckResult -Category 'Parity' -Name "root\$wrapperName" -Status 'Fail' -Detail "root=$rootHash canonical=$canonicalHash"
-    }
+$canonicalDir = Join-Path $RepoRoot 'skills\agent-delegation-tools\scripts'
+$wrapperNames = @('agy.ps1', 'claude.ps1', 'codex.ps1', 'delegate.ps1', 'parallel.ps1', 'status.ps1')
+foreach ($wrapperName in $wrapperNames) {
+    $canonicalPath = Join-Path $canonicalDir $wrapperName
+    $status = if (Test-Path -LiteralPath $canonicalPath -PathType Leaf) { 'Pass' } else { 'Fail' }
+    Add-CheckResult -Category 'Package' -Name $wrapperName -Status $status -Detail $canonicalPath
 }
 Write-Host ''
 
@@ -279,13 +258,11 @@ else {
     $agentsGlobalPath = $null
     $claudeGlobalPath = $null
     if ($homeDirectory) {
-        $agentsGlobalPath = Join-Path $homeDirectory '.agents\skills\agent-delegation-tools\SKILL.md'
+        $agentsGlobalPath = Join-Path (Join-Path $homeDirectory '.agents\skills') 'agent-delegation-tools\SKILL.md'
         $claudeGlobalPath = Join-Path $homeDirectory '.claude\skills\agent-delegation-tools\SKILL.md'
     }
 
     $skillMdCopies = [ordered]@{
-        'Agents (in-repo .agents\skills)'  = Join-Path $RepoRoot '.agents\skills\agent-delegation-tools\SKILL.md'
-        'Claude (in-repo .claude\skills)'  = Join-Path $RepoRoot '.claude\skills\agent-delegation-tools\SKILL.md'
         'Codex (global install)'           = $codexGlobalPath
         'Agents (global ~\.agents\skills)' = $agentsGlobalPath
         'Claude (global ~\.claude\skills)' = $claudeGlobalPath
@@ -324,7 +301,7 @@ else {
     )
     foreach ($case in $recursiveProbeCases) {
         $wrapperName = $case.Name
-        $scriptPath = Join-Path $RepoRoot $wrapperName
+        $scriptPath = Join-Path $canonicalDir $wrapperName
         if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
             Add-CheckResult -Category 'Recursion guard' -Name $wrapperName -Status 'Skip' -Detail 'Script not found.'
             continue
@@ -349,7 +326,7 @@ else {
         @{ Script = 'delegate.ps1'; Arguments = @('-Prompt', 'VALIDATION_PROBE', '-Sandbox', 'not-a-real-mode') }
     )
     foreach ($case in $invalidModeProbes) {
-        $scriptPath = Join-Path $RepoRoot $case.Script
+        $scriptPath = Join-Path $canonicalDir $case.Script
         if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
             Add-CheckResult -Category 'Invalid-mode guard' -Name $case.Script -Status 'Skip' -Detail 'Script not found.'
             continue
@@ -372,7 +349,7 @@ else {
         @{ Name = 'delegate.ps1 -Agent agy + -Sandbox danger-full-access'; Script = 'delegate.ps1'; Arguments = @('-Prompt', 'VALIDATION_PROBE', '-Agent', 'agy', '-Sandbox', 'danger-full-access'); Pattern = 'does not silently map danger-full-access to AGY' }
     )
     foreach ($case in $conflictProbes) {
-        $scriptPath = Join-Path $RepoRoot $case.Script
+        $scriptPath = Join-Path $canonicalDir $case.Script
         if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
             Add-CheckResult -Category 'Mode-conflict guard' -Name $case.Name -Status 'Skip' -Detail 'Script not found.'
             continue
@@ -390,7 +367,7 @@ else {
     Write-Host ''
 
     Write-Host '== claude.ps1 -DryRun parameter mapping (no process is ever launched) ==' -ForegroundColor Cyan
-    $claudeScript = Join-Path $RepoRoot 'claude.ps1'
+    $claudeScript = Join-Path $canonicalDir 'claude.ps1'
     if (-not (Test-Path -LiteralPath $claudeScript -PathType Leaf)) {
         Add-CheckResult -Category 'DryRun mapping' -Name 'claude.ps1' -Status 'Skip' -Detail 'Script not found.'
     }

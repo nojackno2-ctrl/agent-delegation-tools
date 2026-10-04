@@ -1,5 +1,3 @@
-import * as path from 'node:path';
-import * as os from 'node:os';
 import * as fs from 'node:fs';
 import { resolveClaudeExecutable } from '../../core/executables.js';
 import { spawnProcess } from '../../core/process.js';
@@ -18,10 +16,14 @@ export interface InvokeClaudeOptions {
   addDirs?: string[];
   outFile?: string;
   timeoutSec?: number;
+  signal?: AbortSignal;
+  onProgress?: (agent: string) => void;
   claudePath?: string;
 }
 
 export async function invokeClaude(options: InvokeClaudeOptions): Promise<ExecutionResult> {
+  if (options.signal?.aborted) return { exitCode: EXIT_CODES.CANCELLED, stdout: '', stderr: 'Invocation cancelled.', durationMs: 0, cancelled: true };
+  options.onProgress?.('claude');
   let executable: string;
   try {
     executable = resolveClaudeExecutable(options.claudePath);
@@ -70,7 +72,8 @@ export async function invokeClaude(options: InvokeClaudeOptions): Promise<Execut
     }
   }
 
-  const timeoutMs = (options.timeoutSec || 900) * 1000;
+  // 0/undefined = no limit: long-running subagents are left to finish.
+  const timeoutMs = (options.timeoutSec ?? 0) * 1000;
 
   // Pass prompt through stdin to avoid command line limits and character encoding bugs
   const result = await spawnProcess({
@@ -79,6 +82,9 @@ export async function invokeClaude(options: InvokeClaudeOptions): Promise<Execut
     cwd: options.workDir || process.cwd(),
     stdinString: options.prompt,
     timeoutMs,
+    signal: options.signal,
+    onStdout: () => options.onProgress?.('claude'),
+    onStderr: () => options.onProgress?.('claude'),
   });
 
   let outputText = result.stdout;
@@ -100,6 +106,8 @@ export async function invokeClaude(options: InvokeClaudeOptions): Promise<Execut
       // ignore
     }
   }
+
+  if (result.cancelled || result.timedOut) return { ...result, output: outputText.trim() };
 
   // Quota and auth check
   if (/usage limit reached|rate limit|exhausted|too many requests/i.test(result.stderr + result.stdout)) {

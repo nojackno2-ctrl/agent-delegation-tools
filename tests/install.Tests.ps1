@@ -66,6 +66,50 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "DryRun failed with exit code $LASTEXITCODE." }
     Assert-True (($dryRunOutput -join [Environment]::NewLine).Contains('dry run')) 'DryRun output did not mention dry run mode.'
 
+    # 5. Test -Uninstall -DryRun
+    $uninstallDryRun = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -All -Uninstall -DryRun
+    if ($LASTEXITCODE -ne 0) { throw "Uninstall -DryRun failed with exit code $LASTEXITCODE." }
+    Assert-True (($uninstallDryRun -join [Environment]::NewLine).Contains('uninstall dry run')) 'Uninstall -DryRun output did not mention dry run mode.'
+    Assert-True (Test-Path -LiteralPath $destinations[0] -PathType Container) 'Uninstall -DryRun must not delete skill directories.'
+
+    # 6. Test -Uninstall -WhatIf
+    $uninstallWhatIf = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -All -Uninstall -WhatIf
+    if ($LASTEXITCODE -ne 0) { throw "Uninstall -WhatIf failed with exit code $LASTEXITCODE." }
+    Assert-True (Test-Path -LiteralPath $destinations[0] -PathType Container) 'Uninstall -WhatIf must not delete skill directories.'
+
+    # 7. Test -Uninstall -All
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -All -Uninstall | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Uninstall -All failed with exit code $LASTEXITCODE." }
+    foreach ($dest in $destinations) {
+        Assert-True (-not (Test-Path -LiteralPath $dest)) "Uninstall -All did not remove $dest."
+    }
+
+    # 8. Test npm failure path with fake npm on PATH
+    # Reinstall skills first
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -All | Out-Null
+    $fakeBin = Join-Path $testRoot 'fake-bin'
+    New-Item -ItemType Directory -Path $fakeBin | Out-Null
+    $fakeNpmCmd = Join-Path $fakeBin 'npm.cmd'
+    [IO.File]::WriteAllText($fakeNpmCmd, "@echo off`r`necho simulated npm error >&2`r`nexit /b 1`r`n", [Text.Encoding]::ASCII)
+    $originalPath = $env:PATH
+    try {
+        $env:PATH = "$fakeBin;$originalPath"
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $npmFailOutput = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -All -Mcp 2>&1)
+            $npmExitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $prevEap
+        }
+        Assert-True ($npmExitCode -ne 0) 'install.ps1 -Mcp must fail with non-zero exit code when npm fails.'
+        Assert-True (($npmFailOutput -join [Environment]::NewLine).Contains('npm run install:mcp failed')) 'install.ps1 should output clear error message on npm failure.'
+    }
+    finally {
+        $env:PATH = $originalPath
+    }
+
     'install.Tests.ps1: all tests passed.'
 }
 finally {

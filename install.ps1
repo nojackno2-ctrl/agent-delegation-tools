@@ -56,6 +56,8 @@ param(
 
     [switch]$Mcp,
 
+    [switch]$Uninstall,
+
     [switch]$DryRun
 )
 
@@ -99,6 +101,101 @@ function Get-FileHashHex {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
 }
 
+function Deregister-McpServer {
+    param([Parameter(Mandatory = $true)][string]$HomeDirectory)
+
+    $appData = if ($env:APPDATA) { $env:APPDATA } else { Join-Path $HomeDirectory 'AppData\Roaming' }
+
+    # 1. Antigravity Global: ~/.gemini/config/mcp_config.json
+    $geminiConfig = Join-Path $HomeDirectory '.gemini\config\mcp_config.json'
+    if (Test-Path -LiteralPath $geminiConfig -PathType Leaf) {
+        try {
+            $json = Get-Content -LiteralPath $geminiConfig -Raw | ConvertFrom-Json
+            if ($json.mcpServers -and $json.mcpServers.'agent-delegation') {
+                $json.mcpServers.PSObject.Properties.Remove('agent-delegation')
+                $json | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $geminiConfig -Encoding UTF8
+                Write-Host "  [Deregistered] Antigravity Global: $geminiConfig" -ForegroundColor Gray
+            }
+        } catch { }
+    }
+
+    # 2. Antigravity Schemas: ~/.gemini/antigravity/mcp/agent-delegation
+    $geminiSchemas = Join-Path $HomeDirectory '.gemini\antigravity\mcp\agent-delegation'
+    if (Test-Path -LiteralPath $geminiSchemas) {
+        try {
+            Remove-Item -LiteralPath $geminiSchemas -Recurse -Force
+            Write-Host "  [Removed] Antigravity Schemas: $geminiSchemas" -ForegroundColor Gray
+        } catch { }
+    }
+
+    # 3. Antigravity User Settings
+    foreach ($dirName in @('Antigravity IDE', 'Antigravity')) {
+        $settingsPath = Join-Path $appData "$dirName\User\settings.json"
+        if (Test-Path -LiteralPath $settingsPath -PathType Leaf) {
+            try {
+                $json = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+                if ($json.'mcp.servers' -and $json.'mcp.servers'.'agent-delegation') {
+                    $json.'mcp.servers'.PSObject.Properties.Remove('agent-delegation')
+                    $json | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $settingsPath -Encoding UTF8
+                    Write-Host "  [Deregistered] Antigravity Settings: $settingsPath" -ForegroundColor Gray
+                }
+            } catch { }
+        }
+    }
+
+    # 4. Claude Desktop: %APPDATA%\Claude\claude_desktop_config.json
+    $claudeDesktop = Join-Path $appData 'Claude\claude_desktop_config.json'
+    if (Test-Path -LiteralPath $claudeDesktop -PathType Leaf) {
+        try {
+            $json = Get-Content -LiteralPath $claudeDesktop -Raw | ConvertFrom-Json
+            if ($json.mcpServers -and $json.mcpServers.'agent-delegation') {
+                $json.mcpServers.PSObject.Properties.Remove('agent-delegation')
+                $json | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $claudeDesktop -Encoding UTF8
+                Write-Host "  [Deregistered] Claude Desktop: $claudeDesktop" -ForegroundColor Gray
+            }
+        } catch { }
+    }
+
+    # 5. Claude CLI: ~/.claude.json
+    $claudeCli = Join-Path $HomeDirectory '.claude.json'
+    if (Test-Path -LiteralPath $claudeCli -PathType Leaf) {
+        try {
+            $json = Get-Content -LiteralPath $claudeCli -Raw | ConvertFrom-Json
+            if ($json.mcpServers -and $json.mcpServers.'agent-delegation') {
+                $json.mcpServers.PSObject.Properties.Remove('agent-delegation')
+                $json | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $claudeCli -Encoding UTF8
+                Write-Host "  [Deregistered] Claude CLI: $claudeCli" -ForegroundColor Gray
+            }
+        } catch { }
+    }
+
+    # 6. Codex: ~/.codex/config.toml
+    $codexToml = Join-Path $HomeDirectory '.codex\config.toml'
+    if (Test-Path -LiteralPath $codexToml -PathType Leaf) {
+        try {
+            $content = [IO.File]::ReadAllText($codexToml, [Text.Encoding]::UTF8)
+            $lines = $content -split "`r?`n"
+            $outLines = New-Object System.Collections.Generic.List[string]
+            $skipping = $false
+            foreach ($line in $lines) {
+                if ($line -match '^\s*\[mcp_servers\.agent[-_]delegation\]') {
+                    $skipping = $true
+                    continue
+                }
+                if ($skipping -and $line -match '^\s*\[') {
+                    $skipping = $false
+                }
+                if (-not $skipping) {
+                    $outLines.Add($line)
+                }
+            }
+            $newContent = ($outLines -join [Environment]::NewLine).Trim() + [Environment]::NewLine
+            [IO.File]::WriteAllText($codexToml, $newContent, (New-Object Text.UTF8Encoding($false)))
+            Write-Host "  [Deregistered] Codex config.toml: $codexToml" -ForegroundColor Gray
+        } catch { }
+    }
+}
+
 if (-not (Test-Path -LiteralPath (Join-Path $SourceRoot 'SKILL.md') -PathType Leaf)) {
     throw "Source package not found: $SourceRoot. Run this script from its own checkout."
 }
@@ -122,6 +219,68 @@ else {
         Write-Host 'Pass -All to create them, or -Target <codex|agents|claude|copilot> to pick one.'
         exit 1
     }
+}
+
+if ($Uninstall) {
+    Write-Host "Source : $SourceRoot"
+    Write-Host "Mode   : $(if ($IsDryRun) { 'uninstall dry run (nothing is deleted)' } else { 'uninstall' })" -ForegroundColor Yellow
+    Write-Host ''
+
+    foreach ($hostName in $selected) {
+        $skillsRoot = Get-HostSkillsRoot -Name $hostName -HomeDirectory $homeDirectory
+        $destinationRoot = Join-Path $skillsRoot $SkillName
+
+        if (Test-Path -LiteralPath $destinationRoot) {
+            Write-Host ("{0,-8} -> remove {1}" -f $hostName, $destinationRoot)
+            if (-not $IsDryRun) {
+                Remove-Item -LiteralPath $destinationRoot -Recurse -Force
+            }
+        }
+        else {
+            Write-Host ("{0,-8} -> not found {1}" -f $hostName, $destinationRoot) -ForegroundColor DarkGray
+        }
+    }
+    Write-Host ''
+
+    if ($Mcp) {
+        Write-Host 'Deregistering Model Context Protocol (MCP) Server...' -ForegroundColor Cyan
+        $mcpDir = Join-Path $PSScriptRoot 'mcp-server'
+        if ($IsDryRun) {
+            Write-Host '           dry run: MCP deregistration would be executed' -ForegroundColor DarkYellow
+        }
+        else {
+            $hasUninstallScript = $false
+            $pkgJsonPath = Join-Path $mcpDir 'package.json'
+            if (Test-Path -LiteralPath $pkgJsonPath -PathType Leaf) {
+                try {
+                    $pkg = Get-Content -LiteralPath $pkgJsonPath -Raw | ConvertFrom-Json
+                    if ($pkg.scripts -and $pkg.scripts.'uninstall:mcp') {
+                        $hasUninstallScript = $true
+                    }
+                } catch { }
+            }
+
+            if ($hasUninstallScript) {
+                & npm.cmd run uninstall:mcp --prefix $mcpDir
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Error "npm run uninstall:mcp failed with exit code $LASTEXITCODE."
+                    exit $LASTEXITCODE
+                }
+            }
+            else {
+                Deregister-McpServer -HomeDirectory $homeDirectory
+            }
+        }
+        Write-Host ''
+    }
+
+    if ($IsDryRun) {
+        Write-Host 'Dry run complete. Re-run without -DryRun to apply.'
+    }
+    else {
+        Write-Host 'Uninstall complete.' -ForegroundColor Green
+    }
+    exit 0
 }
 
 # Relative paths of every file in the source package.
@@ -212,6 +371,10 @@ if ($Mcp) {
     if (Test-Path -LiteralPath (Join-Path $mcpDir 'package.json') -PathType Leaf) {
         if (-not $IsDryRun) {
             & npm.cmd run install:mcp --prefix $mcpDir
+            if ($LASTEXITCODE -ne 0) {
+                Write-Error "npm run install:mcp failed with exit code $LASTEXITCODE."
+                exit $LASTEXITCODE
+            }
         }
         else {
             Write-Host '           dry run: npm run install:mcp would be executed' -ForegroundColor DarkYellow

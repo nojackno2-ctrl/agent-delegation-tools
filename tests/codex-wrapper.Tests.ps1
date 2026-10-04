@@ -1,15 +1,18 @@
 $ErrorActionPreference = 'Stop'
+$script:assertionsPassed = 0
 
 function Assert-Equal {
     param($Expected, $Actual, [string]$Message)
     if ($Expected -ne $Actual) {
         throw "$Message Expected '$Expected', got '$Actual'."
     }
+    $script:assertionsPassed++
 }
 
 function Assert-True {
     param([bool]$Condition, [string]$Message)
     if (-not $Condition) { throw $Message }
+    $script:assertionsPassed++
 }
 
 function Invoke-ResolverFromScript {
@@ -36,10 +39,10 @@ function Invoke-ResolverFromScript {
 }
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
-$compatibilityWrapper = Join-Path $repositoryRoot 'codex.ps1'
 $wrapper = Join-Path $repositoryRoot 'skills\agent-delegation-tools\scripts\codex.ps1'
 $statusScript = Join-Path $repositoryRoot 'skills\agent-delegation-tools\scripts\status.ps1'
 $fakeCodex = Join-Path $PSScriptRoot 'fixtures\fake-codex.ps1'
+$fakeSandboxFailure = Join-Path $PSScriptRoot 'fixtures\fake-codex-sandbox-failure.ps1'
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("agent-delegation-tools-{0}" -f [Guid]::NewGuid().ToString('N'))
 $testRoot = [IO.Path]::GetFullPath($testRoot)
 $safeTempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
@@ -49,6 +52,8 @@ if (-not $testRoot.StartsWith($safeTempRoot, [StringComparison]::OrdinalIgnoreCa
 }
 
 New-Item -ItemType Directory -Path $testRoot | Out-Null
+$savedDelegationDepth = $env:AGENT_DELEGATION_DEPTH
+Remove-Item Env:AGENT_DELEGATION_DEPTH -ErrorAction SilentlyContinue
 try {
     $resolverProfile = Join-Path $testRoot 'profile'
     $resolverCodexHome = Join-Path $testRoot 'codex-home'
@@ -192,18 +197,6 @@ try {
     Assert-Equal 124 $LASTEXITCODE 'The wrapper should return 124 after its wall-clock timeout.'
     Remove-Item Env:FAKE_CODEX_SLEEP_MS
 
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $compatibilityWrapper `
-        -CodexPath $fakeCodex `
-        -WorkDir $firstWorkDir `
-        -NoAliasPath `
-        -Sandbox read-only `
-        -SkipGitCheck `
-        'Compatibility entry point.'
-    Assert-Equal 0 $LASTEXITCODE 'The root compatibility wrapper should forward new parameters.'
-    $compatibilityArguments = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
-    Assert-Equal $firstWorkDir $compatibilityArguments[4] 'NoAliasPath should preserve the real working directory.'
-    Assert-Equal 'Compatibility entry point.' $compatibilityArguments[-1] 'The root wrapper should preserve the prompt.'
-
     $driveRoot = [IO.Path]::GetPathRoot($testRoot)
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wrapper `
         -CodexPath $fakeCodex `
@@ -241,6 +234,51 @@ try {
     Assert-True (-not (Test-Path -LiteralPath $argsFile)) 'The delegated Codex task must not launch before login succeeds.'
     $env:FAKE_CODEX_LOGGED_IN = 'true'
 
+    # Exercise each precise startup signature on both output streams.
+    foreach ($entryPoint in @($wrapper)) {
+        foreach ($signature in @('helper_unknown_error', 'setup refresh had errors', 'Failed to create unified exec process', 'WINDOWS SANDBOX FAILED')) {
+            foreach ($stream in @('stdout', 'stderr')) {
+                $env:FAKE_SANDBOX_FAILURE_TEXT = $signature
+                $env:FAKE_SANDBOX_FAILURE_STREAM = $stream
+                $previousErrorActionPreference = $ErrorActionPreference
+                $ErrorActionPreference = 'Continue'
+                try {
+                    $failureOutput = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $entryPoint `
+                        -CodexPath $fakeSandboxFailure -WorkDir $firstWorkDir -NoAliasPath `
+                        -Sandbox workspace-write -SkipGitCheck 'Detect a startup failure.' 2>&1)
+                    $failureExitCode = $LASTEXITCODE
+                }
+                finally {
+                    $ErrorActionPreference = $previousErrorActionPreference
+                }
+                Assert-Equal 79 $failureExitCode "A zero-exit startup failure on $stream must fail via $entryPoint."
+                Assert-True (($failureOutput -join "`n").Contains($signature)) 'The startup failure transcript must be preserved.'
+            }
+        }
+        # A run whose commands succeeded but printed a note quoting the signatures
+        # (e.g. reading AI_HANDOFF.md) must stay a success.
+        $env:FAKE_SANDBOX_FAILURE_TEXT = " succeeded in 120ms:`n- Earlier note: helper_unknown_error: setup refresh had errors`nFailed to create unified exec process: helper_unknown_error"
+        $env:FAKE_SANDBOX_FAILURE_STREAM = 'stderr'
+        $previousErrorActionPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $null = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $entryPoint `
+                -CodexPath $fakeSandboxFailure -WorkDir $firstWorkDir -NoAliasPath `
+                -Sandbox workspace-write -SkipGitCheck 'Quote a startup failure.' 2>&1)
+            $quotedExitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+        Assert-Equal 0 $quotedExitCode 'Signatures quoted in output after a successful command must not become an environment failure.'
+        $env:FAKE_CODEX_OUTPUT = 'The ordinary task failed; sandbox permissions denied.'
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $entryPoint `
+            -CodexPath $fakeCodex -WorkDir $firstWorkDir -NoAliasPath `
+            -Sandbox workspace-write -SkipGitCheck 'Preserve an ordinary task result.'
+        Assert-Equal 0 $LASTEXITCODE 'Generic task or sandbox wording must not become an environment failure.'
+    }
+
+    Remove-Item -LiteralPath $argsFile -Force
     $env:AGENT_DELEGATION_DEPTH = '1'
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
@@ -262,6 +300,7 @@ try {
     Assert-True (-not (Test-Path -LiteralPath $argsFile)) 'Recursion rejection must happen before Codex launches.'
 
     'codex-wrapper.Tests.ps1: all tests passed.'
+    "Assertions: $script:assertionsPassed passed, 0 failed."
 }
 finally {
     Remove-Item Env:FAKE_CODEX_ARGS_FILE -ErrorAction SilentlyContinue
@@ -270,7 +309,10 @@ finally {
     Remove-Item Env:FAKE_CODEX_ERROR -ErrorAction SilentlyContinue
     Remove-Item Env:FAKE_CODEX_SLEEP_MS -ErrorAction SilentlyContinue
     Remove-Item Env:FAKE_CODEX_LOGGED_IN -ErrorAction SilentlyContinue
+    Remove-Item Env:FAKE_SANDBOX_FAILURE_TEXT -ErrorAction SilentlyContinue
+    Remove-Item Env:FAKE_SANDBOX_FAILURE_STREAM -ErrorAction SilentlyContinue
     Remove-Item Env:AGENT_DELEGATION_DEPTH -ErrorAction SilentlyContinue
+    if ($null -ne $savedDelegationDepth) { $env:AGENT_DELEGATION_DEPTH = $savedDelegationDepth }
     if ($testRoot.StartsWith($safeTempRoot, [StringComparison]::OrdinalIgnoreCase)) {
         Remove-Item -LiteralPath $testRoot -Recurse -Force
     }
