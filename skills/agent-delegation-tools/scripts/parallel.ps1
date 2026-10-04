@@ -16,11 +16,12 @@ param(
 
     [string]$WorkDir,
 
-    [ValidateRange(1, 86400)]
-    [int]$ChildTimeoutSec = 900,
+    # 0 = no limit for both bounds.
+    [ValidateRange(0, 86400)]
+    [int]$ChildTimeoutSec = 0,
 
-    [ValidateRange(1, 86400)]
-    [int]$TaskTimeoutSec = 1800,
+    [ValidateRange(0, 86400)]
+    [int]$TaskTimeoutSec = 0,
 
     [string]$DelegatePath,
 
@@ -30,6 +31,15 @@ param(
 $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 $utf8NoBom = New-Object Text.UTF8Encoding($false)
+
+$EXIT_SUCCESS = 0
+$EXIT_GENERIC_FAILURE = 1
+$EXIT_QUOTA_EXCEEDED = 10
+$EXIT_ALL_DEPLETED = 75
+$EXIT_CONFIG_AUTH_ERROR = 78
+$EXIT_ENVIRONMENT_FAILURE = 79
+$EXIT_TIMEOUT = 124
+$EXIT_CANCELLED = 130
 
 function Resolve-FullPath {
     param(
@@ -164,7 +174,10 @@ function Complete-DelegationTask {
 
 $depth = 0
 if ($env:AGENT_DELEGATION_DEPTH) { [void][int]::TryParse($env:AGENT_DELEGATION_DEPTH, [ref]$depth) }
-if ($depth -ge 1) { throw "Refusing recursive parallel delegation: AGENT_DELEGATION_DEPTH=$depth." }
+if ($depth -ge 1) {
+    [Console]::Error.WriteLine("Refusing recursive parallel delegation: AGENT_DELEGATION_DEPTH=$depth.")
+    exit $EXIT_ALL_DEPLETED
+}
 
 $resolvedTaskFile = Resolve-FullPath $TaskFile
 if (-not (Test-Path -LiteralPath $resolvedTaskFile -PathType Leaf)) { throw "Task file does not exist: $resolvedTaskFile" }
@@ -253,7 +266,7 @@ for ($index = 0; $index -lt $taskItems.Count; $index++) {
     if (-not $parameters.ContainsKey('TimeoutSec')) { $parameters['TimeoutSec'] = $ChildTimeoutSec }
     $taskLimitValue = Get-TaskProperty -Task $item -Name 'taskTimeoutSec'
     $taskLimit = if ($null -ne $taskLimitValue) { [int]$taskLimitValue } else { $TaskTimeoutSec }
-    if ($taskLimit -lt 1 -or $taskLimit -gt 86400) { throw "Task '$name' taskTimeoutSec must be between 1 and 86400." }
+    if ($taskLimit -lt 0 -or $taskLimit -gt 86400) { throw "Task '$name' taskTimeoutSec must be between 0 (no limit) and 86400." }
 
     $sandbox = if ($parameters.ContainsKey('Sandbox')) { [string]$parameters['Sandbox'] } else { 'read-only' }
     if ($sandbox -eq 'danger-full-access') { throw "Task '$name' cannot use danger-full-access in a parallel batch." }
@@ -342,7 +355,7 @@ try {
 
         $completedAny = $false
         foreach ($run in @($running.ToArray())) {
-            if (-not $run.Process.HasExited -and $run.Stopwatch.Elapsed.TotalSeconds -lt $run.Task.TaskTimeoutSec) { continue }
+            if (-not $run.Process.HasExited -and ($run.Task.TaskTimeoutSec -eq 0 -or $run.Stopwatch.Elapsed.TotalSeconds -lt $run.Task.TaskTimeoutSec)) { continue }
             if (-not $run.Process.HasExited) { $run.TimedOut = $true }
             $result = Complete-DelegationTask -Run $run
             [void]$results.Add($result)
@@ -382,6 +395,6 @@ $summaryJson = $summary | ConvertTo-Json -Depth 8
 if ($Json) { [Console]::Out.WriteLine($summaryJson) }
 else { Write-Output "Parallel batch complete: $succeeded succeeded, $failed failed, $timedOut timed out. Summary: $(Join-Path $resolvedResultsDir 'summary.json')" }
 
-if ($timedOut -gt 0) { exit 124 }
-if ($failed -gt 0) { exit 1 }
-exit 0
+if ($timedOut -gt 0) { exit $EXIT_TIMEOUT }
+if ($failed -gt 0) { exit $EXIT_GENERIC_FAILURE }
+exit $EXIT_SUCCESS

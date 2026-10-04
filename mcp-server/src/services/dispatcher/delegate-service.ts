@@ -1,9 +1,10 @@
-import { AgentName, TargetAgent, FallbackAgent, TaskType, SandboxMode, ExecutionResult, EXIT_CODES } from '../../core/types.js';
-import { getDynamicQuotaHealth, markProviderDepleted } from '../quota/quota-service.js';
+import { AgentName, TargetAgent, FallbackAgent, TaskType, SandboxMode, ExecutionResult, EXIT_CODES, DelegationAttempt } from '../../core/types.js';
+import { getDynamicQuotaHealth, markProviderDepleted, markProviderUnavailable } from '../quota/quota-service.js';
 import { invokeAgy } from '../invokers/agy-invoker.js';
 import { invokeCodex } from '../invokers/codex-invoker.js';
 import { invokeClaude } from '../invokers/claude-invoker.js';
 import { DEFAULT_SANDBOX, isExternalAgent, isWriteSandbox } from '../../core/defaults.js';
+import { writeRunLog, generateRunId, truncateTail } from '../../core/logging.js';
 
 export interface DelegateOptions {
   prompt: string;
@@ -20,12 +21,16 @@ export interface DelegateOptions {
   codexModel?: string;
   codexEffort?: string;
   timeoutSec?: number;
+  runId?: string;
+  signal?: AbortSignal;
+  onProgress?: (agent: string) => void;
 }
 
-export async function delegateTask(options: DelegateOptions): Promise<ExecutionResult & { usedAgent: AgentName }> {
+export async function delegateTask(options: DelegateOptions): Promise<ExecutionResult & { usedAgent: AgentName; attempts: DelegationAttempt[]; logPath?: string }> {
   const taskType = options.taskType || 'implementation';
   const sandbox = options.sandbox || DEFAULT_SANDBOX;
   const balanceQuota = options.balanceQuota !== false;
+  const runId = options.runId || generateRunId();
 
   // Auto-routing only ever picks an external CLI. The Claude CLI draws on the
   // same subscription as the parent agent, so delegating to it offloads context
@@ -49,6 +54,13 @@ export async function delegateTask(options: DelegateOptions): Promise<ExecutionR
   }
 
   const fallbackChain: AgentName[] = [];
+  if (options.signal?.aborted) {
+    return { exitCode: EXIT_CODES.CANCELLED, stdout: '', stderr: 'Delegation cancelled.', durationMs: 0, cancelled: true, usedAgent: primaryAgent, attempts: [] };
+  }
+  const depth = parseInt(process.env.AGENT_DELEGATION_DEPTH || '0', 10);
+  if (depth >= 1) {
+    return { exitCode: EXIT_CODES.ALL_DEPLETED, stdout: '', stderr: `Refusing recursive delegation: AGENT_DELEGATION_DEPTH=${depth}.`, durationMs: 0, usedAgent: primaryAgent, attempts: [] };
+  }
   if (options.fallbackAgent && options.fallbackAgent !== 'none') {
     if (options.fallbackAgent !== primaryAgent) {
       fallbackChain.push(options.fallbackAgent);
@@ -58,7 +70,8 @@ export async function delegateTask(options: DelegateOptions): Promise<ExecutionR
   // Dynamic quota-aware load balancing: read the live subscription state of all
   // three CLIs and rank the healthy ones. External providers always outrank the
   // Claude CLI, which is only reachable as a last resort or when named directly.
-  if (balanceQuota) {
+  // fallback_agent "none" pins the run to the routed primary: no promotion, no failover.
+  if (balanceQuota && options.fallbackAgent !== 'none' && !options.signal?.aborted) {
     try {
       const healthMap = await getDynamicQuotaHealth({ workDir: options.workDir, timeoutSec: 15 });
 
@@ -109,6 +122,8 @@ export async function delegateTask(options: DelegateOptions): Promise<ExecutionR
           effort: options.agyEffort,
           workDir: options.workDir,
           timeoutSec: options.timeoutSec,
+          signal: options.signal,
+          onProgress: options.onProgress,
         });
       case 'codex':
         return await invokeCodex({
@@ -118,6 +133,8 @@ export async function delegateTask(options: DelegateOptions): Promise<ExecutionR
           effort: options.codexEffort,
           workDir: options.workDir,
           timeoutSec: options.timeoutSec,
+          signal: options.signal,
+          onProgress: options.onProgress,
         });
       case 'claude':
         return await invokeClaude({
@@ -127,11 +144,14 @@ export async function delegateTask(options: DelegateOptions): Promise<ExecutionR
           effort: options.claudeEffort,
           workDir: options.workDir,
           timeoutSec: options.timeoutSec,
+          signal: options.signal,
+          onProgress: options.onProgress,
         });
     }
   }
 
-  let lastResult: ExecutionResult = {
+  const attempts: DelegationAttempt[] = [];
+  let lastResult: ExecutionResult & { logPath?: string } = {
     exitCode: EXIT_CODES.ALL_DEPLETED,
     stdout: '',
     stderr: 'No candidates available.',
@@ -140,24 +160,50 @@ export async function delegateTask(options: DelegateOptions): Promise<ExecutionR
 
   for (let i = 0; i < candidateAgents.length; i++) {
     const currentAgent = candidateAgents[i];
+    if (options.signal?.aborted) {
+      return { ...lastResult, exitCode: EXIT_CODES.CANCELLED, stderr: 'Delegation cancelled.', cancelled: true, usedAgent: currentAgent, attempts };
+    }
     const res = await executeOnAgent(currentAgent);
+    const logPath = writeRunLog(runId, currentAgent, res.stdout, res.stderr);
+    res.logPath = logPath;
+
+    const rawError = (res.stderr && res.stderr.trim().length > 0) ? res.stderr : res.stdout;
+    const errorTail = truncateTail(rawError, 1500);
+    attempts.push({
+      agent: currentAgent,
+      exitCode: res.exitCode,
+      durationMs: res.durationMs,
+      errorTail,
+    });
+
+    if (options.signal?.aborted || res.exitCode === EXIT_CODES.CANCELLED) {
+      return { ...res, exitCode: EXIT_CODES.CANCELLED, cancelled: true, usedAgent: currentAgent, attempts, logPath };
+    }
 
     if (res.exitCode === EXIT_CODES.SUCCESS) {
       return {
         ...res,
         usedAgent: currentAgent,
+        attempts,
+        logPath,
       };
     }
 
-    lastResult = res;
+    lastResult = { ...res, logPath };
 
-    // If failed due to quota limit (10) or auth error (78), mark depleted and continue to next candidate
+    // Only quota exhaustion marks depletion; configuration/environment failures
+    // skip to the next backend without changing subscription health.
     if (res.exitCode === EXIT_CODES.QUOTA_EXCEEDED) {
       markProviderDepleted(currentAgent);
       continue;
     }
 
     if (res.exitCode === EXIT_CODES.CONFIG_AUTH_ERROR) {
+      markProviderUnavailable(currentAgent, 'unavailable', res.stderr || 'Configuration or authentication error.');
+      continue;
+    }
+
+    if (res.exitCode === EXIT_CODES.ENVIRONMENT_FAILURE) {
       continue;
     }
 
@@ -165,11 +211,15 @@ export async function delegateTask(options: DelegateOptions): Promise<ExecutionR
     return {
       ...res,
       usedAgent: currentAgent,
+      attempts,
+      logPath,
     };
   }
 
   return {
     ...lastResult,
     usedAgent: candidateAgents[candidateAgents.length - 1] || primaryAgent,
+    attempts,
+    logPath: lastResult.logPath,
   };
 }

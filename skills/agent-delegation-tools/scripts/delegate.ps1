@@ -54,11 +54,12 @@ param(
     [ValidateSet('isolated', 'project')]
     [string]$Context = 'isolated',
 
-    [ValidateRange(1, 86400)]
-    [int]$TimeoutSec = 900,
+    # 0 = no limit: wait until the child finishes.
+    [ValidateRange(0, 86400)]
+    [int]$TimeoutSec = 0,
 
-    [ValidatePattern('^[1-9][0-9]*(ms|s|m|h)$')]
-    [string]$AgyPrintTimeout = '5m',
+    [ValidatePattern('^(0|[1-9][0-9]*(ms|s|m|h))$')]
+    [string]$AgyPrintTimeout = '0',
 
     [ValidateRange(1024, 131072)]
     [int]$HandoffMaxChars = 12000,
@@ -87,7 +88,15 @@ param(
 $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
-$EXIT_QUOTA_EXHAUSTED = 75
+$EXIT_SUCCESS = 0
+$EXIT_GENERIC_FAILURE = 1
+$EXIT_QUOTA_EXCEEDED = 10
+$EXIT_ALL_DEPLETED = 75
+$EXIT_CONFIG_AUTH_ERROR = 78
+$EXIT_ENVIRONMENT_FAILURE = 79
+$EXIT_TIMEOUT = 124
+$EXIT_CANCELLED = 130
+$EXIT_QUOTA_EXHAUSTED = $EXIT_QUOTA_EXCEEDED
 $script:scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $script:scriptDirectory) { $script:scriptDirectory = (Get-Location).ProviderPath }
 
@@ -202,8 +211,8 @@ function Resolve-OutputPath {
 # Fallback child settings when the parent supplies none. Explicit parameters win.
 $script:DefaultBackendModel = @{
     agy    = 'gemini-3.8-flash'
-    codex  = 'gpt-6-luna'
-    claude = 'claude-sonnet-5'
+    codex  = 'gpt-6.1-sol'
+    claude = 'claude-sonnet-5-5'
 }
 $script:DefaultBackendEffort = @{
     agy    = 'medium'
@@ -265,7 +274,6 @@ $notes
 
 function Test-QuotaExhausted {
     param(
-        [Parameter(Mandatory = $true)][string]$Backend,
         [Parameter(Mandatory = $true)][int]$ExitCode,
         [string]$Output,
         [string]$RawOutput
@@ -334,7 +342,7 @@ function Invoke-WrapperProcess {
         if (-not $process.Start()) { throw "Failed to start the $Backend wrapper process." }
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit($TimeoutSec * 1000)) {
+        if (-not $process.WaitForExit($(if ($TimeoutSec -gt 0) { $TimeoutSec * 1000 } else { -1 }))) {
             $timedOut = $true
             try {
                 $taskKill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
@@ -396,7 +404,8 @@ if ($env:AGENT_DELEGATION_DEPTH) {
     [void][int]::TryParse($env:AGENT_DELEGATION_DEPTH, [ref]$depth)
 }
 if ($depth -ge 1) {
-    throw "Refusing recursive delegation: AGENT_DELEGATION_DEPTH=$depth."
+    [Console]::Error.WriteLine("Refusing recursive delegation: AGENT_DELEGATION_DEPTH=$depth.")
+    exit $EXIT_ALL_DEPLETED
 }
 
 # Auto-routing only picks an external CLI: a Claude child spends the same
@@ -527,6 +536,7 @@ try {
                 $parameters['OutFile'] = $attemptOutFile
                 if ($Json)    { $parameters['OutputFormat'] = 'json' }
                 if ($AgySkipPermissions) { $parameters['SkipPermissions'] = $true }
+                if ($Sandbox -eq 'workspace-write' -and $AgySkipPermissions) { $parameters['Sandbox'] = $true }
                 if ($AgyPath) { $parameters['AgyPath'] = $AgyPath }
             }
             'codex' {
@@ -563,8 +573,12 @@ try {
             Copy-AttemptOutput -Source $attemptRawFile -FallbackText $attempt.Stdout -Destination $resolvedRawFile
         }
 
-        $quotaExhausted = Test-QuotaExhausted -Backend $backend -ExitCode $attempt.ExitCode -Output $attemptOutput -RawOutput $attemptRaw
-        if (-not $quotaExhausted) {
+        $quotaExhausted = ($attempt.ExitCode -eq $EXIT_QUOTA_EXCEEDED) -or
+            (Test-QuotaExhausted -ExitCode $attempt.ExitCode -Output $attemptOutput -RawOutput $attemptRaw)
+        $isConfigAuth = ($attempt.ExitCode -eq $EXIT_CONFIG_AUTH_ERROR)
+        $isEnvFailure = ($attempt.ExitCode -eq $EXIT_ENVIRONMENT_FAILURE)
+
+        if (-not $quotaExhausted -and -not $isConfigAuth -and -not $isEnvFailure) {
             Copy-AttemptOutput -Source $attemptOutFile -FallbackText $attemptOutput -Destination $resolvedOutFile
             if ($attempt.Stdout) { [Console]::Out.Write($attempt.Stdout) }
             if ($attempt.Stderr) { [Console]::Error.Write($attempt.Stderr) }
@@ -576,13 +590,27 @@ try {
             Copy-AttemptOutput -Source $attemptOutFile -FallbackText $attemptOutput -Destination $resolvedOutFile
             if ($attempt.Stdout) { [Console]::Out.Write($attempt.Stdout) }
             if ($attempt.Stderr) { [Console]::Error.Write($attempt.Stderr) }
-            Write-Warning "The $backend child reported exhausted usage/quota and no fallback CLI remains."
-            $terminalExitCode = $EXIT_QUOTA_EXHAUSTED
+            if ($quotaExhausted) {
+                Write-Warning "The $backend child reported exhausted usage/quota and no fallback CLI remains."
+                $terminalExitCode = if ($candidateAgents.Count -gt 1) { $EXIT_ALL_DEPLETED } else { $EXIT_QUOTA_EXCEEDED }
+            }
+            else {
+                $terminalExitCode = $attempt.ExitCode
+            }
             break
         }
 
         $nextBackend = $candidateAgents[$index + 1]
-        Write-Warning "The $backend child reported exhausted usage/quota; continuing with $nextBackend."
+        if ($quotaExhausted) {
+            Write-Warning "The $backend child reported exhausted usage/quota; continuing with $nextBackend."
+        }
+        elseif ($isConfigAuth) {
+            Write-Warning "The $backend child reported auth/config error ($($attempt.ExitCode)); continuing with $nextBackend."
+        }
+        elseif ($isEnvFailure) {
+            Write-Warning "The $backend child reported environment failure ($($attempt.ExitCode)); continuing with $nextBackend."
+        }
+
         if ($handoffHistory) { $handoffHistory += [Environment]::NewLine }
         $handoffHistory += "--- $backend attempt output ---" + [Environment]::NewLine + $attemptOutput
         $currentPrompt = New-ContinuationPrompt -OriginalPrompt $Prompt -PreviousBackend $backend -PreviousOutput $handoffHistory

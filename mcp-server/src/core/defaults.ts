@@ -11,8 +11,8 @@ import { AgentName, SandboxMode } from './types.js';
 /** Default model + reasoning effort per backend. Overridable per call. */
 export const DEFAULT_MODELS = {
   agy: { model: 'gemini-3.8-flash', effort: 'medium' },
-  codex: { model: 'gpt-6-luna', effort: 'medium' },
-  claude: { model: 'claude-sonnet-5', effort: 'medium' },
+  codex: { model: 'gpt-6.1-sol', effort: 'medium' },
+  claude: { model: 'claude-sonnet-5-5', effort: 'medium' },
 } as const satisfies Record<AgentName, { model: string; effort: string }>;
 
 /**
@@ -28,7 +28,6 @@ export const DEFAULT_SANDBOX: SandboxMode = 'workspace-write';
  * the last resort unless the caller names it explicitly.
  */
 export const EXTERNAL_AGENTS: AgentName[] = ['agy', 'codex'];
-export const AGENT_PRIORITY: AgentName[] = ['agy', 'codex', 'claude'];
 
 /** True when the backend is one of the two external (non-Claude-quota) CLIs. */
 export function isExternalAgent(agent: AgentName): boolean {

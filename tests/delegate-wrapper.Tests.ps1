@@ -44,7 +44,6 @@ function Clear-BackendEvidence {
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $wrapper = Join-Path $repositoryRoot 'skills\agent-delegation-tools\scripts\delegate.ps1'
-$compatibilityWrapper = Join-Path $repositoryRoot 'delegate.ps1'
 $fakeAgy = Join-Path $PSScriptRoot 'fixtures\fake-agy.ps1'
 $fakeClaude = Join-Path $PSScriptRoot 'fixtures\fake-claude.ps1'
 $fakeCodex = Join-Path $PSScriptRoot 'fixtures\fake-codex.ps1'
@@ -53,6 +52,9 @@ $safeTempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 if (-not $testRoot.StartsWith($safeTempRoot, [StringComparison]::OrdinalIgnoreCase)) {
     throw "Refusing to use an unexpected test directory: $testRoot"
 }
+
+$savedDelegationDepth = $env:AGENT_DELEGATION_DEPTH
+Remove-Item Env:AGENT_DELEGATION_DEPTH -ErrorAction SilentlyContinue
 
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 try {
@@ -95,8 +97,12 @@ try {
     Assert-True (-not (Test-Path -LiteralPath $codexArgsFile)) 'Analysis dispatch must not also launch Codex.'
     $analysisArguments = Read-RecordedArguments $agyArgsFile
     Assert-Equal 'plan' $analysisArguments[[Array]::IndexOf($analysisArguments, '--mode') + 1] 'Default dispatcher analysis must be read-only.'
-    Assert-Equal $addDir $analysisArguments[[Array]::IndexOf($analysisArguments, '--add-dir') + 1] 'Dispatcher did not forward AGY AddDir.'
+    $firstAnalysisAddDir = [Array]::IndexOf($analysisArguments, '--add-dir')
+    Assert-Equal $workDir $analysisArguments[$firstAnalysisAddDir + 1] 'Dispatcher must register the AGY work directory via --add-dir.'
+    Assert-Equal $addDir $analysisArguments[$firstAnalysisAddDir + 3] 'Dispatcher did not forward AGY AddDir.'
     Assert-Equal $prompt $analysisArguments[1] 'Dispatcher changed the AGY prompt.'
+    Assert-Equal 'gemini-3.8-flash' $analysisArguments[[Array]::IndexOf($analysisArguments, '--model') + 1] 'Default AGY model must be gemini-3.8-flash.'
+    Assert-Equal 'medium' $analysisArguments[[Array]::IndexOf($analysisArguments, '--effort') + 1] 'Default AGY effort must be medium.'
 
     Clear-BackendEvidence $evidenceFiles
     $env:FAKE_CLAUDE_OUTPUT = 'review result'
@@ -108,6 +114,13 @@ try {
     $reviewArguments = Read-RecordedArguments $claudeArgsFile
     Assert-Equal 'plan' $reviewArguments[[Array]::IndexOf($reviewArguments, '--permission-mode') + 1] 'Review dispatch must be read-only.'
     Assert-Equal $prompt ([IO.File]::ReadAllText($claudePromptFile, [Text.Encoding]::UTF8)) 'Dispatcher changed the Claude stdin prompt.'
+
+    Clear-BackendEvidence $evidenceFiles
+    $defaultCodex = Invoke-EncodedChild '& $env:TEST_WRAPPER -Agent codex -Sandbox read-only -CodexPath $env:TEST_CODEX -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $defaultCodex.ExitCode ('Default Codex dispatch failed: ' + ($defaultCodex.Output -join [Environment]::NewLine))
+    $defaultCodexArguments = Read-RecordedArguments $codexArgsFile
+    Assert-Equal 'gpt-6.1-sol' $defaultCodexArguments[[Array]::IndexOf($defaultCodexArguments, '--model') + 1] 'Default Codex model must be GPT-6.1 Sol.'
+    Assert-True ($defaultCodexArguments -contains 'model_reasoning_effort="medium"') 'Default Codex effort must be medium.'
 
     Clear-BackendEvidence $evidenceFiles
     $implementation = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType implementation -Sandbox workspace-write -CodexModel codex-child-model -CodexEffort xhigh -CodexPath $env:TEST_CODEX -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
@@ -158,12 +171,32 @@ try {
 
     Clear-BackendEvidence $evidenceFiles
     $env:FAKE_CODEX_LOGGED_IN = 'false'
-    $loggedOut = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType implementation -Sandbox workspace-write -FallbackAgent claude -CodexPath $env:TEST_CODEX -ClaudePath $env:TEST_CLAUDE -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
-    Assert-Equal 78 $loggedOut.ExitCode 'Dispatcher must preserve the login-required exit code.'
-    Assert-True (($loggedOut.Output -join [Environment]::NewLine).Contains('codex login')) 'Dispatcher must surface the Codex login instruction.'
+    $loggedOutNoFallback = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType implementation -Sandbox workspace-write -CodexPath $env:TEST_CODEX -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
+    Assert-Equal 78 $loggedOutNoFallback.ExitCode 'Dispatcher must preserve the login-required exit code when no fallback is configured.'
+    Assert-True (($loggedOutNoFallback.Output -join [Environment]::NewLine).Contains('codex login')) 'Dispatcher must surface the Codex login instruction.'
     Assert-True (-not (Test-Path -LiteralPath $codexArgsFile)) 'A logged-out Codex child task must not launch.'
-    Assert-True (-not (Test-Path -LiteralPath $claudeArgsFile)) 'Authentication failure must stop instead of silently switching providers.'
+
+    Clear-BackendEvidence $evidenceFiles
+    $env:FAKE_CLAUDE_OUTPUT = '{"is_error":false,"result":"auth fallback result"}'
+    $loggedOutFallback = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType implementation -Sandbox workspace-write -FallbackAgent claude -CodexPath $env:TEST_CODEX -ClaudePath $env:TEST_CLAUDE -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $loggedOutFallback.ExitCode ('Auth failure should fail over to Claude: ' + ($loggedOutFallback.Output -join [Environment]::NewLine))
+    Assert-True (Test-Path -LiteralPath $claudeArgsFile -PathType Leaf) 'Dispatcher must fail over to Claude on auth failure.'
     $env:FAKE_CODEX_LOGGED_IN = 'true'
+
+    Clear-BackendEvidence $evidenceFiles
+    $env:FAKE_CODEX_EXIT_CODE = '79'
+    $env:FAKE_CODEX_OUTPUT = 'windows sandbox failed'
+    $envNoFallback = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType implementation -Sandbox workspace-write -CodexPath $env:TEST_CODEX -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
+    Assert-Equal 79 $envNoFallback.ExitCode 'Dispatcher must preserve environment failure exit code when no fallback is configured.'
+
+    Clear-BackendEvidence $evidenceFiles
+    $env:FAKE_CLAUDE_OUTPUT = '{"is_error":false,"result":"env fallback result"}'
+    $env:FAKE_CLAUDE_EXIT_CODE = '0'
+    $envFallback = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType implementation -Sandbox workspace-write -FallbackAgent claude -CodexPath $env:TEST_CODEX -ClaudePath $env:TEST_CLAUDE -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $envFallback.ExitCode ('Environment failure should fail over to Claude: ' + ($envFallback.Output -join [Environment]::NewLine))
+    Assert-True (Test-Path -LiteralPath $claudeArgsFile -PathType Leaf) 'Dispatcher must fail over to Claude on environment failure.'
+    $env:FAKE_CODEX_EXIT_CODE = '0'
+    $env:FAKE_CODEX_OUTPUT = $null
 
     Clear-BackendEvidence $evidenceFiles
     $env:FAKE_AGY_EXIT_CODE = '29'
@@ -184,6 +217,12 @@ try {
     Assert-True ($fallbackPrompt.Contains('previous agy child')) 'Cross-CLI handoff did not identify the exhausted prior child.'
     Assert-True ($fallbackPrompt.Contains('usage limit reached')) 'Cross-CLI handoff did not preserve usable prior output.'
     Assert-Equal 'fallback result' ([IO.File]::ReadAllText($outFile, [Text.Encoding]::UTF8)) 'Dispatcher OutFile did not receive the successful fallback result.'
+
+    Clear-BackendEvidence $evidenceFiles
+    $env:FAKE_AGY_EXIT_CODE = '29'
+    $env:FAKE_AGY_OUTPUT = 'HTTP 429: quota exhausted.'
+    $singleQuota = Invoke-EncodedChild '& $env:TEST_WRAPPER -Agent agy -AgyPath $env:TEST_AGY -WorkDir $env:TEST_WORKDIR -Prompt $env:TEST_PROMPT'
+    Assert-Equal 10 $singleQuota.ExitCode 'Single provider quota exhaustion without fallback must return exit code 10.'
 
     Clear-BackendEvidence $evidenceFiles
     $env:FAKE_AGY_EXIT_CODE = '29'
@@ -210,12 +249,6 @@ try {
     $env:FAKE_AGY_OUTPUT = 'analysis result'
     $env:FAKE_CLAUDE_EXIT_CODE = '0'
     $env:FAKE_CLAUDE_OUTPUT = 'review result'
-
-    Clear-BackendEvidence $evidenceFiles
-    $env:TEST_WRAPPER = $compatibilityWrapper
-    $forwarded = Invoke-EncodedChild '& $env:TEST_WRAPPER -Agent agy -AgyPath $env:TEST_AGY -WorkDir $env:TEST_WORKDIR -Prompt $env:TEST_PROMPT'
-    Assert-Equal 0 $forwarded.ExitCode ('Root dispatcher forwarder failed: ' + ($forwarded.Output -join [Environment]::NewLine))
-    Assert-True (Test-Path -LiteralPath $agyArgsFile -PathType Leaf) 'Root dispatcher did not reach the selected backend.'
 
     Clear-BackendEvidence $evidenceFiles
     $env:FAKE_AGY_EXIT_CODE = '29'
@@ -271,13 +304,16 @@ try {
     $env:AGENT_DELEGATION_DEPTH = '1'
     $env:TEST_WRAPPER = $wrapper
     $recursive = Invoke-EncodedChild '& $env:TEST_WRAPPER -Agent agy -AgyPath $env:TEST_AGY -WorkDir $env:TEST_WORKDIR -Prompt $env:TEST_PROMPT'
-    Assert-True ($recursive.ExitCode -ne 0) 'Dispatcher recursion guard should reject nested delegation.'
+    Assert-Equal 75 $recursive.ExitCode 'Dispatcher recursion guard should reject nested delegation with exit code 75.'
     Assert-True (-not (Test-Path -LiteralPath $agyArgsFile)) 'Recursion rejection must happen before a backend launches.'
     Remove-Item Env:AGENT_DELEGATION_DEPTH
 
     'delegate-wrapper.Tests.ps1: all tests passed.'
 }
 finally {
+    if ($savedDelegationDepth) {
+        $env:AGENT_DELEGATION_DEPTH = $savedDelegationDepth
+    }
     foreach ($name in @('TEST_WRAPPER','TEST_AGY','TEST_CLAUDE','TEST_CODEX','TEST_WORKDIR','TEST_ADDDIR','TEST_OUTFILE','TEST_PROMPT','FAKE_AGY_ARGS_FILE','FAKE_AGY_EXIT_CODE','FAKE_AGY_OUTPUT','FAKE_AGY_SLEEP_MS','FAKE_CLAUDE_ARGS_FILE','FAKE_CLAUDE_PROMPT_FILE','FAKE_CLAUDE_CWD_FILE','FAKE_CLAUDE_DEPTH_FILE','FAKE_CLAUDE_EXIT_CODE','FAKE_CLAUDE_OUTPUT','FAKE_CLAUDE_ERROR','FAKE_CLAUDE_SLEEP_MS','FAKE_CLAUDE_LOGGED_IN','FAKE_CODEX_ARGS_FILE','FAKE_CODEX_EXIT_CODE','FAKE_CODEX_OUTPUT','FAKE_CODEX_ERROR','FAKE_CODEX_SLEEP_MS','FAKE_CODEX_LOGGED_IN','FAKE_STATUS_RESPONSE','AGENT_DELEGATION_DEPTH')) {
         Remove-Item -LiteralPath ("Env:$name") -ErrorAction SilentlyContinue
     }

@@ -1,6 +1,5 @@
-import * as path from 'node:path';
-import * as os from 'node:os';
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { resolveAgyExecutable } from '../../core/executables.js';
 import { spawnProcess } from '../../core/process.js';
 import { ExecutionResult, EXIT_CODES } from '../../core/types.js';
@@ -15,11 +14,15 @@ export interface InvokeAgyOptions {
   addDirs?: string[];
   outFile?: string;
   timeoutSec?: number;
+  signal?: AbortSignal;
+  onProgress?: (agent: string) => void;
   agyPath?: string;
   skipPermissions?: boolean;
 }
 
 export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionResult> {
+  if (options.signal?.aborted) return { exitCode: EXIT_CODES.CANCELLED, stdout: '', stderr: 'Invocation cancelled.', durationMs: 0, cancelled: true };
+  options.onProgress?.('agy');
   let executable: string;
   try {
     executable = resolveAgyExecutable(options.agyPath);
@@ -43,36 +46,40 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
   let effectiveEffort = options.effort;
 
   // Normalize model and effort aliases
-  const effortParenMatch = effectiveModel.match(/^gemini[ -]?(3\.[5678])[ -]?flash\s*\((high|medium|low)\)$/i);
-  if (effortParenMatch) {
-    effectiveModel = `gemini-${effortParenMatch[1]}-flash`;
-    if (!effectiveEffort) effectiveEffort = effortParenMatch[2].toLowerCase() as any;
-  } else {
-    const effortHyphenMatch = effectiveModel.match(/^gemini[ -]?(3\.[5678])[ -]?flash-(high|medium|low)$/i);
-    if (effortHyphenMatch) {
-      effectiveModel = `gemini-${effortHyphenMatch[1]}-flash`;
-      if (!effectiveEffort) effectiveEffort = effortHyphenMatch[2].toLowerCase() as any;
-    } else {
-      const thinkingMatch = effectiveModel.match(/^gemini[ -]?(3\.[5678])[ -]?flash-thinking$/i);
-      if (thinkingMatch) {
-        effectiveModel = `gemini-${thinkingMatch[1]}-flash`;
-        if (!effectiveEffort) effectiveEffort = 'high';
-      } else {
-        const plainFlashMatch = effectiveModel.match(/^(?:gemini[ -]?)?(3\.[5678])[ -]?flash$/i);
-        if (plainFlashMatch) {
-          effectiveModel = `gemini-${plainFlashMatch[1]}-flash`;
-        }
-      }
-    }
+  const flashMatch = effectiveModel.match(/^gemini[ -]?(3\.[5-8])[ -]?flash\s*\((high|medium|low)\)$/i);
+  if (flashMatch) {
+    effectiveModel = `gemini-${flashMatch[1]}-flash`;
+    if (!effectiveEffort) effectiveEffort = flashMatch[2].toLowerCase() as any;
+  }
+  const flashDashMatch = effectiveModel.match(/^gemini[ -]?(3\.[5-8])[ -]?flash-(high|medium|low)$/i);
+  if (flashDashMatch) {
+    effectiveModel = `gemini-${flashDashMatch[1]}-flash`;
+    if (!effectiveEffort) effectiveEffort = flashDashMatch[2].toLowerCase() as any;
+  }
+  const proMatch = effectiveModel.match(/^gemini[ -]?(3\.1)[ -]?pro\s*\((high|low)\)$/i);
+  if (proMatch) {
+    effectiveModel = 'gemini-3.1-pro';
+    if (!effectiveEffort) effectiveEffort = proMatch[2].toLowerCase() as any;
+  }
+  const claudeMatch = effectiveModel.match(/^claude[ -]?(opus|sonnet)[ -]?(?:5\.5|5-5)\s*\((high|medium|low)\)$/i);
+  if (claudeMatch) {
+    effectiveModel = `claude-${claudeMatch[1].toLowerCase()}-5-5`;
+    if (!effectiveEffort) effectiveEffort = claudeMatch[2].toLowerCase() as any;
+  }
+  const claudeDashMatch = effectiveModel.match(/^claude[ -]?(opus|sonnet)[ -]?(?:5\.5|5-5)-(high|medium|low)$/i);
+  if (claudeDashMatch) {
+    effectiveModel = `claude-${claudeDashMatch[1].toLowerCase()}-5-5`;
+    if (!effectiveEffort) effectiveEffort = claudeDashMatch[2].toLowerCase() as any;
+  }
+  const gptOssMatch = effectiveModel.match(/^gpt[ -]?oss[ -]?120b(?:\s*\(medium\)|-medium)?$/i);
+  if (gptOssMatch) {
+    effectiveModel = 'gpt-oss-120b-medium';
   }
 
   // AGY CLI rejects Flash models without --effort, so always carry one.
   if (!effectiveEffort) {
     effectiveEffort = DEFAULT_MODELS.agy.effort;
   }
-
-  const timeoutSec = options.timeoutSec || 900;
-  const workDir = path.resolve(options.workDir || process.cwd());
 
   const args: string[] = [
     '-p',
@@ -81,10 +88,8 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
     effectiveMode,
     '--output-format',
     'text',
-    // AGY's own print wait defaults to 5m and silently truncates the turn, so it
-    // must follow the caller's timeout rather than a fixed value.
     '--print-timeout',
-    `${timeoutSec}s`,
+    options.timeoutSec ? `${options.timeoutSec}s` : '0',
   ];
 
   if (effectiveModel) args.push('--model', effectiveModel);
@@ -97,18 +102,23 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
 
   // AGY does not treat its cwd as a workspace: without --add-dir it runs with
   // "No active workspace", cannot resolve relative paths, and wanders the drives.
+  const workDir = path.resolve(options.workDir || process.cwd());
   const workspaceDirs = [workDir, ...(options.addDirs || []).filter(Boolean).map((d) => path.resolve(d))];
   for (const d of new Set(workspaceDirs)) {
     args.push('--add-dir', d);
   }
 
-  // Give AGY's own print timeout a head start so its output is flushed before we kill it.
-  const timeoutMs = (timeoutSec + 30) * 1000;
+  // 0/undefined = no limit: long-running subagents are left to finish. With a
+  // limit, AGY's own --print-timeout fires first so its output is flushed.
+  const timeoutMs = options.timeoutSec ? (options.timeoutSec + 30) * 1000 : 0;
   const result = await spawnProcess({
     executable,
     args,
     cwd: workDir,
     timeoutMs,
+    signal: options.signal,
+    onStdout: () => options.onProgress?.('agy'),
+    onStderr: () => options.onProgress?.('agy'),
   });
 
   const combinedOutput = result.stdout + (result.stderr ? '\n' + result.stderr : '');
@@ -120,6 +130,8 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
       // ignore
     }
   }
+
+  if (result.cancelled || result.timedOut) return { ...result, output: combinedOutput.trim() };
 
   // Login failure detection
   if (/login|sign in|auth required|not authenticated/i.test(combinedOutput) && result.exitCode !== 0) {

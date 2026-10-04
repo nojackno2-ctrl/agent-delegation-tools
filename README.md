@@ -33,8 +33,8 @@
 
 - **兩個外部 CLI 承擔主要負載。** `claude` 後端花的是和父代理同一份訂閱額度，只省 context 不省額度，因此自動路由永不選它；只有使用者指名、或 AGY 與 Codex 都耗盡時才會用到。
 - **額度決定路由。** `balance_quota` 預設開啟，派工前讀三個 CLI 的即時額度（10 秒快取），耗盡者自動跳過並轉移。
-- **子代理預設就有寫入權限。** `sandbox` 預設 `workspace-write`，子代理在 `work_dir` 底下直接讀寫檔案，沒有任何核准步驟；純分析才傳 `read-only`。
-- **MCP 優先發現與單一命名空間**：在 Codex 及所有支援環境中，一律優先搜尋 deferred/lazy 工具（`get_agent_quotas`、`delegate_task`、`delegate_parallel`、`invoke_agy`、`invoke_codex`、`invoke_claude`，包含 `ALL_TOOLS` / tool search），使用單一 canonical `agent_delegation` 命名空間。唯有確認無 MCP 連接時才 fallback 至 PowerShell 腳本。
+- **子代理預設就有寫入權限。** `sandbox` 預設 `workspace-write`，寫入模式跳過互動提示；只有 Codex 提供 OS 沙箱邊界，AGY 與 Claude 不受 `work_dir` 限制（見下方沙箱說明）。純分析才傳 `read-only`。
+- **MCP 優先發現與單一命名空間**：在 Codex 及所有支援環境中，一律優先搜尋 deferred/lazy 工具（`get_agent_quotas`、`delegate_task`、`delegate_parallel`、`invoke_agy`、`invoke_codex`、`invoke_claude`、`get_job_status`、`get_job_result`、`cancel_job`，包含 `ALL_TOOLS` / tool search），使用單一 canonical `agent_delegation` 命名空間。唯有確認無 MCP 連接時才 fallback 至 PowerShell 腳本。
 - **沙盒透過主機 MCP bridge 使用外部 CLI。** `CodexSandboxOffline` 不直接繼承主機登入憑證；`invoke_*`、`delegate_*` 與 `get_agent_quotas` 由主機側 MCP Server 啟動已登入的 CLI。禁止把 `auth.json`、OAuth token 或其他憑證複製進 workspace／temp 來繞過身分隔離。在沙盒內執行 `codex mcp list` 僅讀取沙箱環境目錄，無法診斷 Desktop 主機註冊表，切勿將其誤判為 MCP 斷線。
 
 MCP Server 會在連線時把這份政策以 `instructions` 送給客戶端，因此任何接上的代理都會依此行為。
@@ -45,12 +45,15 @@ MCP Server 會在連線時把這份政策以 `instructions` 送給客戶端，�
 
 | 子代理後端 | MCP 工具 | 核心專長與適用情境 | 預設模型 | 額度消耗來源 |
 |---|---|---|---|---|
-| **Google Antigravity CLI** | `invoke_agy` | 超長脈絡閱讀、架構分析、Plan 規劃、低成本快速產出 | `gemini-3.8-flash` + effort `medium`（可選 `gemini-3.1-pro`） | Google Antigravity |
-| **OpenAI Codex CLI** | `invoke_codex` | 跨檔案大型實作、深度代碼重構（內建 Windows 中文路徑 Junction） | `gpt-6-luna` + effort `medium` | OpenAI / ChatGPT |
-| **Anthropic Claude Code** | `invoke_claude` | 深度安全審查、邏輯對齊、架構邊界掃描；支援 Session 接續 | `claude-sonnet-5` + effort `medium` | Anthropic Claude（**與父代理同一份額度**） |
+| **Google Antigravity CLI** | `invoke_agy` | 超長脈絡閱讀、架構分析、Plan 規劃、低成本快速產出 | `gemini-3.8-flash` + effort `medium`（可選 `gemini-3.7-flash`、`gemini-3.1-pro` 等） | Google Antigravity |
+| **OpenAI Codex CLI** | `invoke_codex` | 跨檔案大型實作、深度代碼重構（內建 Windows 中文路徑 Junction） | `gpt-6.1-sol` + effort `medium` | OpenAI / ChatGPT |
+| **Anthropic Claude Code** | `invoke_claude` | 深度安全審查、邏輯對齊、架構邊界掃描；支援 Session 接續 | `claude-sonnet-5-5` + effort `medium` | Anthropic Claude（**與父代理同一份額度**） |
 | **智慧動態調度器** | `delegate_task` | 自動依任務類型路由（`analysis`/`scaffolding` $\to$ AGY，`implementation`/`review` $\to$ Codex）並即時負載均衡；自動路由**不會**選 Claude | 智慧選型 | 依選用後端 |
 | **並行 Worker Pool** | `delegate_parallel` | 多任務並行批次分發執行，在兩個外部 CLI 之間輪流分配（可自訂並行上限，預設 4） | 智慧選型 | 依選用後端 |
 | **即時配額檢測器** | `get_agent_quotas` | 零 Token 消耗即時讀取三大 CLI 訂閱用量、剩餘百分比與重置時間 | — | 0 Token |
+| **工作狀態** | `get_job_status` | 省略 `job_id` 列出保留的工作；指定 ID 查詢摘要 | — | 0 Token |
+| **工作結果** | `get_job_result` | 以 `job_id` 輪詢，`wait_sec` 預設 25、上限 50 秒 | — | 0 Token |
+| **取消工作** | `cancel_job` | 取消指定工作並終止子行程樹 | — | 0 Token |
 
 ---
 
@@ -67,7 +70,9 @@ npm run build
 ```
 
 編譯完成後，可執行檔將產生於：
-`C:/離線儲存/程式設計/子代理/mcp-server/dist/index.js`
+`<REPO_ROOT>/mcp-server/dist/index.js`
+
+`<REPO_ROOT>` 是 clone 後 repo 的絕對路徑（含 README.md 的目錄）。在 repo 根目錄用 PowerShell `(Get-Location).Path` 找到它；建置後用 `(Resolve-Path .\mcp-server\dist\index.js).Path` 取得完整入口路徑。將下方設定範例的 placeholder 換成實際路徑；JSON 可用 `/` 或將 `\` 寫成 `\\`。Node 路徑也請依本機安裝位置調整。
 
 ---
 
@@ -80,7 +85,7 @@ npm run build
   "mcpServers": {
     "agent-delegation": {
       "command": "node",
-      "args": ["C:/離線儲存/程式設計/子代理/mcp-server/dist/index.js"]
+      "args": ["<REPO_ROOT>/mcp-server/dist/index.js"]
     }
   }
 }
@@ -93,7 +98,7 @@ npm run build
   "mcpServers": {
     "agent-delegation": {
       "command": "node",
-      "args": ["C:/離線儲存/程式設計/子代理/mcp-server/dist/index.js"]
+      "args": ["<REPO_ROOT>/mcp-server/dist/index.js"]
     }
   }
 }
@@ -104,7 +109,7 @@ npm run build
 在設定介面新增 MCP Server：
 - **Name**: `agent-delegation`
 - **Command**: `node`
-- **Args**: `C:/離線儲存/程式設計/子代理/mcp-server/dist/index.js`
+- **Args**: `<REPO_ROOT>/mcp-server/dist/index.js`
 
 #### 🅳 VS Code (Roo Code / Cline / Copilot)
 
@@ -114,12 +119,18 @@ npm run build
   "mcpServers": {
     "agent-delegation": {
       "command": "node",
-      "args": ["C:/離線儲存/程式設計/子代理/mcp-server/dist/index.js"],
+      "args": ["<REPO_ROOT>/mcp-server/dist/index.js"],
       "disabled": false,
       "autoApprove": [
         "get_agent_quotas",
         "delegate_task",
-        "delegate_parallel"
+        "delegate_parallel",
+        "invoke_agy",
+        "invoke_codex",
+        "invoke_claude",
+        "get_job_status",
+        "get_job_result",
+        "cancel_job"
       ]
     }
   }
@@ -132,7 +143,7 @@ npm run build
 ```toml
 [mcp_servers.agent_delegation]
 command = "C:\\Program Files\\nodejs\\node.exe"
-args = ["C:/離線儲存/程式設計/子代理/mcp-server/dist/index.js"]
+args = ["<REPO_ROOT>/mcp-server/dist/index.js"]
 ```
 
 ---
@@ -151,12 +162,14 @@ args = ["C:/離線儲存/程式設計/子代理/mcp-server/dist/index.js"]
 智慧評估任務性質與當前各後端配額健康度，自動路由至最佳後端執行。
 - **參數**：
   - `prompt` (string, 必填): 任務說明或指令
-  - `task_type` (enum, 可選): `"analysis"` (預設, 導向 AGY) | `"implementation"` (導向 Codex) | `"review"` (導向 Claude) | `"scaffolding"`
-  - `sandbox` (enum, 可選): `"read-only"` (預設) | `"workspace-write"` (修改程式碼時使用) | `"danger-full-access"`
+  - `task_type` (enum, 可選): `"implementation"` (預設，導向 Codex) | `"review"` (導向 Codex) | `"analysis"` (導向 AGY) | `"scaffolding"` (導向 AGY)
+  - `sandbox` (enum, 可選): `"workspace-write"` (預設) | `"read-only"` (純分析) | `"danger-full-access"`
   - `balance_quota` (boolean, 可選): 自動避開額度剩餘 $\le 10\%$ 或已耗盡的後端（預設 `true`）
   - `agent` (enum, 可選): 強制指定後端 (`"auto"` | `"codex"` | `"claude"` | `"agy"`)
-  - `fallback_agent` (enum, 可選): 指定備用後端 (`"codex"` | `"claude"` | `"agy"` | `"none"`)
-  - `work_dir` (string, 可選): 執行工作目錄
+  - `fallback_agent` (enum, 可選): 指定備用後端 (`"codex"` | `"claude"` | `"agy"` | `"none"`)。`"none"` 會把工作固定在主要後端：不做額度轉移、也不失敗轉移
+  - `work_dir` (string, 必填): 絕對路徑，必須是既存目錄
+  - `async` (boolean, 可選): 預設 `true`，立即傳回 `job_id`；`false` 同步等待
+  - `timeout_sec` (number, 可選): 預設 `0` 不限執行時間；正值設定子代理逾時
   - `agy_model` / `codex_model` / `claude_model`: 模型覆寫參數
   - `agy_effort`: Antigravity 思考強度 (`"low"` | `"medium"` | `"high"`)
 
@@ -164,21 +177,54 @@ args = ["C:/離線儲存/程式設計/子代理/mcp-server/dist/index.js"]
 同時分發多項子代理任務並行處理，保持原始索引與輸出摘要。
 - **參數**：
   - `tasks` (array of string, 必填): 待執行的任務提示詞陣列
-  - `task_type` (enum, 可選): `"analysis"` | `"implementation"` | `"review"` | `"scaffolding"`
-  - `sandbox` (enum, 可選): `"read-only"` | `"workspace-write"` | `"danger-full-access"`
+  - `task_type` (enum, 可選): `"implementation"` (預設) | `"analysis"` | `"review"` | `"scaffolding"`
+  - `sandbox` (enum, 可選): `"workspace-write"` (預設) | `"read-only"` | `"danger-full-access"`
   - `max_concurrency` (number, 可選): 最大並行工作進程數（預設 4，上限 16）
-  - `work_dir` (string, 可選): 工作目錄
+  - `work_dir` (string, 必填): 絕對路徑，必須是既存目錄
+  - `async` (boolean, 可選): 預設 `true`，傳回整批工作的 `job_id`
 
 ### 4. `invoke_agy`（直接呼叫 Antigravity CLI）
-- **參數**：`prompt`, `mode` (`"plan"` | `"accept-edits"`), `model`, `effort`, `work_dir`, `timeout_sec`
+- **參數**：`prompt`, `mode` (`"plan"` | `"accept-edits"` | `"read-only"` | `"workspace-write"`)，`model`, `effort`, `work_dir`（必填、絕對且既存目錄）, `timeout_sec`, `async`（預設 `false`）
 
 ### 5. `invoke_codex`（直接呼叫 OpenAI Codex CLI）
-- **參數**：`prompt`, `sandbox` (`"read-only"` | `"workspace-write"`), `model`, `effort`, `work_dir`, `timeout_sec`
+- **參數**：`prompt`, `sandbox` (`"read-only"` | `"workspace-write"` | `"danger-full-access"`), `model`, `effort`, `work_dir`（必填、絕對且既存目錄）, `timeout_sec`, `async`（預設 `false`）
 - 寫入模式使用 `--approve-for-me` 自動審核；目前 Codex CLI 由此旗標隱含 `workspace-write`，wrapper 不會再同傳互斥的 `--sandbox workspace-write`。唯讀模式仍顯式傳 `--sandbox read-only`。
 - 主機側 resolver 優先選擇同時包含 `codex.exe` 與匹配 `codex-code-mode-host.exe` 的 Desktop bundle；缺少 companion 的 `~\.codex\.sandbox-bin` 只作 fallback，避免工具呼叫 fail closed 後模型仍誤報完成。
 
 ### 6. `invoke_claude`（直接呼叫 Anthropic Claude Code CLI）
-- **參數**：`prompt`, `mode`, `context` (`"isolated"` 預設省 90% tokens | `"project"`), `session_id`, `resume`, `work_dir`, `timeout_sec`
+- **參數**：`prompt`, `mode`, `context` (`"isolated"` 預設 | `"project"`), `model`, `effort`, `session_id`, `resume`, `work_dir`（必填、絕對且既存目錄）, `timeout_sec`, `async`（預設 `false`）
+
+### 7. `get_job_status`（工作摘要／列表）
+- **參數**：`job_id`（可選）；省略時列出所有仍保留的工作，指定時回傳該工作狀態摘要。
+
+### 8. `get_job_result`（輪詢工作結果）
+- **參數**：`job_id`（必填）、`wait_sec`（預設 25，範圍 0–50 秒）。`0` 立即查詢；等待時間用完仍在執行時，繼續輪詢同一個 ID。
+
+### 9. `cancel_job`（取消與清理）
+- **參數**：`job_id`（必填）；終止該工作的子行程樹，取消退出碼為 `130`。
+
+## 非同步工作流程與主機逾時
+
+Desktop MCP 主機有自己的請求逾時限制，會忽略 `MCP_TOOL_TIMEOUT`；子代理的 `timeout_sec=0` 也無法取消主機限制。因此長任務應採「派工 → 輪詢」：
+
+1. 呼叫 `delegate_task` 或 `delegate_parallel`，預設 `async=true`，立即取得 `job_id`。所有派工與 `invoke_*` 呼叫都必須傳入絕對且既存目錄的 `work_dir`。
+2. 呼叫 `get_job_result({"job_id":"<JOB_ID>","wait_sec":25})`；單次最多等 50 秒。狀態是 `running` 時繼續輪詢，直到 `succeeded`、`failed`、`timed_out` 或 `cancelled`。收到 ID 只代表已派工，不能當成成功。
+3. 用 `get_job_status` 列出工作或查摘要；需要停止時呼叫 `cancel_job`，它會終止子行程樹。
+4. 結果包含 `attempts` 容錯切換歷史，可追查每個後端嘗試及失敗原因。過長輸出保留尾端（tail-truncated），並附完整 log 檔路徑；檢查結果時必要可讀取完整 log。
+
+`invoke_agy`、`invoke_codex`、`invoke_claude` 預設同步（`async=false`），長任務請明確傳 `async=true`，再使用同一套輪詢流程。`delegate_*` 也可傳 `async=false` 同步等待，但仍受主機請求逾時限制。完成工作在記憶體中保留 1 小時，最多 50 筆；執行中的工作不因保留期限被移除。主機重啟／重新連線載入新 Server 時，記憶體工作列表不會持久保存。
+
+## 沙箱邊界與 Windows 疑難排解
+
+只有 **Codex** 的 `workspace-write` 提供 OS 沙箱限制。**AGY** 寫入模式使用 `--dangerously-skip-permissions`，**Claude CLI** 使用 `bypassPermissions`：兩者跳過權限提示，**不會被限制在 `work_dir`**。`work_dir` 是工作起始目錄；父代理仍須界定可修改檔案並審查 diff。`read-only` 分別映射為 AGY `plan`、Claude `plan`、Codex `read-only`；前兩者是 CLI 計畫模式，不能宣稱等同 OS 檔案隔離。`danger-full-access` 也沒有 workspace 沙箱邊界。
+
+若 Codex 記錄 `helper_unknown_error: setup refresh had errors`，並出現 `write ACE failed ... open ACL target for update`，repo 資料夾可能由另一個（已孤立的）SID 擁有，導致 Windows 沙箱無法更新 ACL；這和 Git 的 `dubious ownership` 是同一個所有權問題。在**系統管理員**終端機，將 `<repo>` 換成受影響 repo 的絕對路徑後執行：
+
+```powershell
+takeown /F <repo> /R /D Y
+```
+
+修復所有權後重試；單純增加逾時不會修好 ACL。此處只是操作說明，不會自動修改主機設定。
 
 ---
 
@@ -186,12 +232,16 @@ args = ["C:/離線儲存/程式設計/子代理/mcp-server/dist/index.js"]
 
 | 退出碼 | 狀態含義 | 建議處理方式 |
 |:---:|---|---|
-| `0` | **成功完成** | 正常讀取輸出結果。 |
-| `10` | **API 額度耗盡 (Quota Exceeded)** | 自動負載平衡器會將該後端在快取中標註為 `depleted` 並切換至健康後端。**切勿**配置私人付費 API Key 盲目重試。 |
-| `75` | **所有後端額度皆已耗盡** | 依 Fallback 鏈嘗試後全部耗盡，建議等待額度重置時間。 |
-| `78` | **認證或設定錯誤** | CLI 未登入或授權過期，請執行對應的 `auth login`。 |
-| `124` | **執行逾時 (Timeout)** | 子代理進程已被安全終止（預設 900s），建議縮小任務粒度。 |
-| `1` | **執行失敗** | 檢查 stderr 錯誤輸出。 |
+| `0` | **成功 (Success)** | 讀取結果並驗證變更。 |
+| `1` | **一般失敗 (Generic failure)** | 檢查 stderr 與完整 log。 |
+| `10` | **單一供應商額度耗盡 (Single provider quota exceeded)** | 調度器嘗試健康備援；勿以私人 API Key 盲目重試。 |
+| `75` | **所有供應商耗盡／拒絕遞迴委派 (All providers depleted / recursive delegation refused)** | 等待額度重置或移除遞迴派工；勿繞過深度防護。 |
+| `78` | **設定／認證錯誤 (Config/auth error)** | 修復設定或執行對應登入；不當成額度耗盡。 |
+| `79` | **環境失敗 (Environment failure)** | 例如 Codex Windows 沙箱設定失敗；調度器會切換備援 (fails over)，查看 `attempts` 並修復環境。 |
+| `124` | **逾時 (Timeout)** | 子代理 `timeout_sec` / `-TimeoutSec` 預設 `0` 不限時；正值限制執行，配額查詢另有逾時。 |
+| `130` | **取消 (Cancelled)** | 使用者或呼叫端取消；子行程樹已終止。 |
+
+退出碼唯一來源為 [`mcp-server/src/core/types.ts`](mcp-server/src/core/types.ts) 的 `EXIT_CODES`；README 與 SKILL 表格依此同步。
 
 ---
 
@@ -202,11 +252,8 @@ args = ["C:/離線儲存/程式設計/子代理/mcp-server/dist/index.js"]
 ```powershell
 cd mcp-server
 
-# 執行單元與整合測試套件 (Core, Quota, Cache, Dispatcher)
+# 執行單元與整合測試套件，含使用測試替身的 Stdio JSON-RPC 測試
 npm test
-
-# 執行 Stdio JSON-RPC 端對端整合煙霧測試 (Live Quota & Dispatch)
-npm run test:client
 
 # 執行 TypeScript 型別檢查
 npm run lint
@@ -215,6 +262,16 @@ npm run lint
 ---
 
 ## 專案目錄結構
+
+### 兩套前端與同步規則
+
+PowerShell wrappers 與 TypeScript MCP Server 是刻意保留的兩套前端：前者支援純終端／無 MCP 的環境，後者以原生 TypeScript 提供 MCP 工具，不透過 PowerShell 橋接。預設模型／effort 以 `mcp-server/src/core/defaults.ts` 為準，退出碼以 `mcp-server/src/core/types.ts` 為準；`tests/parity.Tests.ps1` 檢查兩套前端的預設模型與退出碼一致性。詳見 [架構與前端同步說明 (docs/architecture.md)](docs/architecture.md)。
+
+PowerShell 腳本只存放於 `skills/agent-delegation-tools/scripts/`，技能說明只存放於 `skills/agent-delegation-tools/SKILL.md`；`install.ps1` 將此套件安裝到使用者技能目錄。從 repo 根目錄執行 parity 檢查：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/parity.Tests.ps1
+```
 
 ```
 .
@@ -245,25 +302,27 @@ npm run lint
 │       │   ├── quota.ts
 │       │   ├── delegate.ts
 │       │   └── invokers.ts
-│       ├── tests/                    # 零依賴原生 Node.js 單元與整合測試套件
+│       └── tests/                    # 零依賴原生 Node.js 單元與整合測試套件
 │       │   ├── core.test.ts
 │       │   ├── quota-parsers.test.ts
 │       │   ├── quota-cache.test.ts
 │       │   └── dispatcher.test.ts
-│       └── test-client.ts            # Stdio 端對端測試客戶端
 ├── README.md                         # 本專案說明文件 (MCP Server 核心指南)
 ├── AGENTS.md                         # 跨 Agent 協作規範
 ├── AI_HANDOFF.md                     # 即時共享專案記憶與交接手冊
-└── [scripts/]                        # 獨立備用 PowerShell CLI 腳本 (非 MCP 環境終端手動呼叫)
+├── docs/handoff-archive.md            # 2026-10-03 以前的交接歷史
+├── docs/architecture.md               # 兩套前端架構與 Parity 同步規範
+└── skills/agent-delegation-tools/scripts/ # PowerShell 腳本
 ```
 
 ---
 
 ## 附錄：終端獨立腳本備用參考 (Standalone CLI)
 
-若需要在純 PowerShell 終端機環境中直接執行，專案根目錄亦保留備用封裝腳本：
-- `.\delegate.ps1 -TaskType implementation -Sandbox workspace-write "實作功能"`
-- `.\status.ps1 -Agent all`
+若需要在純 PowerShell 終端機環境中直接執行，從專案根目錄呼叫技能套件的封裝腳本：
+
+- `.\skills\agent-delegation-tools\scripts\delegate.ps1 -TaskType implementation -Sandbox workspace-write "實作功能"`
+- `.\skills\agent-delegation-tools\scripts\status.ps1 -Agent all`
 - 驗證腳本：`powershell -ExecutionPolicy Bypass -File .\validate.ps1`
 
 ---

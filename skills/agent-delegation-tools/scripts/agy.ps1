@@ -26,9 +26,13 @@ param(
     [ValidateSet('text', 'json', 'stream-json')]
     [string]$OutputFormat = 'text',
 
-    # AGY provides its own bounded print timeout.
-    [ValidatePattern('^[1-9][0-9]*(ms|s|m|h)$')]
-    [string]$PrintTimeout = '5m',
+    # AGY's own print timeout; 0 waits until the turn completes.
+    [ValidatePattern('^(0|[1-9][0-9]*(ms|s|m|h))$')]
+    [string]$PrintTimeout = '0',
+
+    # 0 = no limit: wait until the child finishes.
+    [ValidateRange(0, 86400)]
+    [int]$TimeoutSec = 0,
 
     [switch]$SkipPermissions,
 
@@ -40,6 +44,15 @@ param(
 
 $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
+
+$EXIT_SUCCESS = 0
+$EXIT_GENERIC_FAILURE = 1
+$EXIT_QUOTA_EXCEEDED = 10
+$EXIT_ALL_DEPLETED = 75
+$EXIT_CONFIG_AUTH_ERROR = 78
+$EXIT_ENVIRONMENT_FAILURE = 79
+$EXIT_TIMEOUT = 124
+$EXIT_CANCELLED = 130
 
 function Resolve-ExistingDirectory {
     param(
@@ -110,6 +123,23 @@ function Format-WindowsArgument {
     return '"' + $escaped + '"'
 }
 
+function Stop-DelegatedProcessTree {
+    param([Diagnostics.Process]$Process)
+
+    if (-not $Process) { return }
+    try {
+        if ($Process.HasExited) { return }
+        $taskKill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
+        if (Test-Path -LiteralPath $taskKill -PathType Leaf) {
+            & $taskKill /PID $Process.Id /T /F 2>$null | Out-Null
+        }
+        if (-not $Process.HasExited) { $Process.Kill() }
+    }
+    catch {
+        try { $Process.Kill() } catch { }
+    }
+}
+
 if ([string]::IsNullOrWhiteSpace($Prompt)) {
     throw 'Prompt must contain one bounded task description.'
 }
@@ -119,7 +149,8 @@ if ($env:AGENT_DELEGATION_DEPTH) {
     [void][int]::TryParse($env:AGENT_DELEGATION_DEPTH, [ref]$depth)
 }
 if ($depth -ge 1) {
-    throw "Refusing recursive delegation: AGENT_DELEGATION_DEPTH=$depth."
+    [Console]::Error.WriteLine("Refusing recursive delegation: AGENT_DELEGATION_DEPTH=$depth.")
+    exit $EXIT_ALL_DEPLETED
 }
 
 $effectiveMode = switch ($Mode) {
@@ -129,6 +160,9 @@ $effectiveMode = switch ($Mode) {
 }
 if ($SkipPermissions -and $effectiveMode -ne 'accept-edits') {
     throw 'SkipPermissions requires an explicit write mode (workspace-write or accept-edits).'
+}
+if ($SkipPermissions -and $effectiveMode -eq 'accept-edits') {
+    $Sandbox = $true
 }
 
 if (-not $WorkDir) { $WorkDir = (Get-Location).ProviderPath }
@@ -145,63 +179,43 @@ $effectiveModel = $Model
 $effectiveEffort = $Effort
 
 if ($effectiveModel) {
-    if ($effectiveModel -match '^(?i)gemini[ -]?3\.8[ -]?flash\s*\((high|medium|low)\)$') {
-        $effectiveModel = 'gemini-3.8-flash'
-        if (-not $effectiveEffort) { $effectiveEffort = $Matches[1].ToLowerInvariant() }
+    $trimmedModel = $effectiveModel.Trim()
+
+    # 1. Parse effort if embedded in the model string
+    $parsedEffort = $null
+    if ($trimmedModel -match '^(?i)(.*?)-thinking$') {
+        $trimmedModel = $Matches[1].Trim()
+        $parsedEffort = 'high'
     }
-    elseif ($effectiveModel -match '^(?i)gemini[ -]?3\.7[ -]?flash\s*\((high|medium|low)\)$') {
-        $effectiveModel = 'gemini-3.7-flash'
-        if (-not $effectiveEffort) { $effectiveEffort = $Matches[1].ToLowerInvariant() }
+    elseif ($trimmedModel -match '^(?i)(.*?)\s*\((low|medium|high)\)$') {
+        $trimmedModel = $Matches[1].Trim()
+        $parsedEffort = $Matches[2].ToLowerInvariant()
     }
-    elseif ($effectiveModel -match '^(?i)gemini[ -]?3\.6[ -]?flash\s*\((high|medium|low)\)$') {
-        $effectiveModel = 'gemini-3.6-flash'
-        if (-not $effectiveEffort) { $effectiveEffort = $Matches[1].ToLowerInvariant() }
-    }
-    elseif ($effectiveModel -match '^(?i)gemini[ -]?3\.5[ -]?flash\s*\((high|medium|low)\)$') {
-        $effectiveModel = 'gemini-3.5-flash'
-        if (-not $effectiveEffort) { $effectiveEffort = $Matches[1].ToLowerInvariant() }
-    }
-    elseif ($effectiveModel -match '^(?i)gemini[ -]?3\.1[ -]?pro\s*\((high|low)\)$') {
-        $effectiveModel = 'gemini-3.1-pro'
-        if (-not $effectiveEffort) { $effectiveEffort = $Matches[1].ToLowerInvariant() }
-    }
-    elseif ($effectiveModel -match '^(?i)gemini[ -]?3\.8[ -]?flash-(high|medium|low)$') {
-        $effectiveModel = 'gemini-3.8-flash'
-        if (-not $effectiveEffort) { $effectiveEffort = $Matches[1].ToLowerInvariant() }
-    }
-    elseif ($effectiveModel -match '^(?i)gemini[ -]?3\.7[ -]?flash-(high|medium|low)$') {
-        $effectiveModel = 'gemini-3.7-flash'
-        if (-not $effectiveEffort) { $effectiveEffort = $Matches[1].ToLowerInvariant() }
-    }
-    elseif ($effectiveModel -match '^(?i)gemini[ -]?3\.8[ -]?flash-thinking$') {
-        $effectiveModel = 'gemini-3.8-flash'
-        if (-not $effectiveEffort) { $effectiveEffort = 'high' }
-    }
-    elseif ($effectiveModel -match '^(?i)gemini[ -]?3\.7[ -]?flash-thinking$') {
-        $effectiveModel = 'gemini-3.7-flash'
-        if (-not $effectiveEffort) { $effectiveEffort = 'high' }
-    }
-    elseif ($effectiveModel -match '^(?i)(?:gemini[ -]?)?3\.8[ -]?flash$') {
-        $effectiveModel = 'gemini-3.8-flash'
-    }
-    elseif ($effectiveModel -match '^(?i)(?:gemini[ -]?)?3\.7[ -]?flash$') {
-        $effectiveModel = 'gemini-3.7-flash'
-    }
-    elseif ($effectiveModel -match '^(?i)(?:gemini[ -]?)?3\.6[ -]?flash$') {
-        $effectiveModel = 'gemini-3.6-flash'
-    }
-    elseif ($effectiveModel -match '^(?i)(?:gemini[ -]?)?3\.5[ -]?flash$') {
-        $effectiveModel = 'gemini-3.5-flash'
-    }
-    elseif ($effectiveModel -match '^(?i)(?:gemini[ -]?)?3\.1[ -]?pro$') {
-        $effectiveModel = 'gemini-3.1-pro'
+    elseif ($trimmedModel -match '^(?i)(.*?)[ -](low|medium|high)$') {
+        $trimmedModel = $Matches[1].Trim()
+        $parsedEffort = $Matches[2].ToLowerInvariant()
     }
 
-    if ($effectiveModel -match '^(?i)gemini-3\.[5678]-flash$' -and -not $effectiveEffort) {
-        $effectiveEffort = 'low'
+    if ($parsedEffort -and -not $effectiveEffort) {
+        $effectiveEffort = $parsedEffort
     }
-    elseif ($effectiveModel -match '^(?i)gemini-3\.1-pro$' -and -not $effectiveEffort) {
-        $effectiveEffort = 'low'
+
+    # 2. Normalize known model family names
+    if ($trimmedModel -match '^(?i)gpt[ -]?oss[ -]?120b(?:\s*\(medium\)|-medium)?$') {
+        $trimmedModel = 'gpt-oss-120b-medium'
+    }
+    elseif ($trimmedModel -match '^(?i)(?:gemini[ -]?)?(\d+\.\d+)[ -]?(flash|pro)$') {
+        $trimmedModel = "gemini-$($Matches[1])-$($Matches[2].ToLowerInvariant())"
+    }
+    elseif ($trimmedModel -match '^(?i)(?:claude[ -]?)?(opus|sonnet)[ -]?(?:5\.5|5-5)$') {
+        $trimmedModel = "claude-$($Matches[1].ToLowerInvariant())-5-5"
+    }
+
+    $effectiveModel = $trimmedModel
+
+    # 3. Default effort to medium when model is specified without effort
+    if (-not $effectiveEffort -and $effectiveModel -ne 'gpt-oss-120b-medium') {
+        $effectiveEffort = 'medium'
     }
 }
 
@@ -232,9 +246,11 @@ if ($extension -eq '.cmd' -or $extension -eq '.bat') {
 }
 
 $previousDepth = $env:AGENT_DELEGATION_DEPTH
-$exitCode = 1
+$exitCode = $EXIT_GENERIC_FAILURE
+$timedOut = $false
 $stdout = ''
 $stderr = ''
+$process = $null
 try {
     $env:AGENT_DELEGATION_DEPTH = ($depth + 1).ToString()
 
@@ -256,8 +272,16 @@ try {
     if (-not $process.Start()) { throw 'Failed to start the AGY worker process.' }
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
     $stderrTask = $process.StandardError.ReadToEndAsync()
-    $process.WaitForExit()
-    $exitCode = $process.ExitCode
+    if (-not $process.WaitForExit($(if ($TimeoutSec -gt 0) { $TimeoutSec * 1000 } else { -1 }))) {
+        $timedOut = $true
+        Stop-DelegatedProcessTree $process
+        $null = $process.WaitForExit(10000)
+        $exitCode = $EXIT_TIMEOUT
+    }
+    else {
+        $process.WaitForExit()
+        $exitCode = $process.ExitCode
+    }
     $stdout = $stdoutTask.Result
     $stderr = $stderrTask.Result
 }
@@ -276,7 +300,7 @@ if ($stderr) {
 
 $isAuthFailure = ($exitCode -ne 0) -and ($combinedOutput -match '(?i)(Authentication required|Please sign in|not logged in|sign in)')
 if ($isAuthFailure) {
-    $exitCode = 78
+    $exitCode = $EXIT_CONFIG_AUTH_ERROR
     $loginGuidance = "Antigravity CLI is not logged in. Run 'agy' interactively, complete sign-in, then retry the delegated task."
     if (-not $combinedOutput.Contains("Run 'agy' interactively")) {
         if ($combinedOutput -and -not $combinedOutput.EndsWith([Environment]::NewLine)) {
@@ -291,6 +315,9 @@ if ($isAuthFailure) {
         $stderr = $loginGuidance
     }
 }
+elseif (-not $timedOut -and ($exitCode -ne 0) -and ($combinedOutput -match '(?i)(insufficient[_ -]?quota|quota\s+(?:has\s+been\s+)?(?:exceeded|exhausted|depleted|used\s+up)|usage\s+(?:limit|cap)\s+(?:has\s+been\s+)?(?:reached|exceeded|exhausted)|(?:daily|weekly|monthly)\s+(?:usage\s+)?limit\s+(?:reached|exceeded|exhausted)|you(?:''ve| have)\s+(?:hit|reached|exceeded)\s+(?:your\s+)?(?:usage\s+)?limit|rate[_ -]?limit(?:ed|\s+(?:reached|exceeded))?|too\s+many\s+requests|resource[_ -]?exhausted|(?:out\s+of|no|insufficient)\s+credits?|credits?\s+(?:are\s+)?(?:exhausted|depleted)|credit\s+balance\s+(?:is\s+)?(?:too\s+low|empty)|(?:http\s*)?429\b)')) {
+    $exitCode = $EXIT_QUOTA_EXCEEDED
+}
 
 if ($resolvedOutFile) {
     $utf8NoBom = New-Object Text.UTF8Encoding($false)
@@ -298,5 +325,6 @@ if ($resolvedOutFile) {
 }
 if ($stdout) { [Console]::Out.Write($stdout) }
 if ($stderr) { [Console]::Error.Write($stderr) }
+if ($timedOut) { Write-Warning "AGY worker timed out after $TimeoutSec seconds and its process tree was terminated." }
 
 exit $exitCode

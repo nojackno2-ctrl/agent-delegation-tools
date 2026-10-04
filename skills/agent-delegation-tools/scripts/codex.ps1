@@ -2,10 +2,10 @@
 #
 # The wrapper keeps the delegated process reproducible and safe on Windows:
 #
-#   .\codex.ps1 'Implement the parser fix and run focused tests.'
-#   .\codex.ps1 -Sandbox read-only -Ephemeral 'Inspect the parser failure.'
-#   .\codex.ps1 -WorkDir 'C:\path with non-ASCII characters' '...'
-#   .\codex.ps1 -AddDir 'C:\shared\fixtures' -OutFile result.txt '...'
+#   .\skills\agent-delegation-tools\scripts\codex.ps1 'Implement the parser fix and run focused tests.'
+#   .\skills\agent-delegation-tools\scripts\codex.ps1 -Sandbox read-only -Ephemeral 'Inspect the parser failure.'
+#   .\skills\agent-delegation-tools\scripts\codex.ps1 -WorkDir 'C:\path with non-ASCII characters' '...'
+#   .\skills\agent-delegation-tools\scripts\codex.ps1 -AddDir 'C:\shared\fixtures' -OutFile result.txt '...'
 
 [CmdletBinding()]
 param(
@@ -42,9 +42,9 @@ param(
     # Let Codex automatically review approval requests inside workspace-write.
     [switch]$ApproveForMe,
 
-    # Hard wall-clock bound for the complete child process tree.
-    [ValidateRange(1, 86400)]
-    [int]$TimeoutSec = 900,
+    # Optional wall-clock bound for the complete child process tree; 0 = no limit.
+    [ValidateRange(0, 86400)]
+    [int]$TimeoutSec = 0,
 
     # Explicit executable override. CODEX_CLI_PATH is the environment-variable equivalent.
     [string]$CodexPath,
@@ -58,6 +58,15 @@ param(
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
+
+$EXIT_SUCCESS = 0
+$EXIT_GENERIC_FAILURE = 1
+$EXIT_QUOTA_EXCEEDED = 10
+$EXIT_ALL_DEPLETED = 75
+$EXIT_CONFIG_AUTH_ERROR = 78
+$EXIT_ENVIRONMENT_FAILURE = 79
+$EXIT_TIMEOUT = 124
+$EXIT_CANCELLED = 130
 
 function Get-NormalizedDirectoryPath {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -240,7 +249,8 @@ if ($env:AGENT_DELEGATION_DEPTH) {
     [void][int]::TryParse($env:AGENT_DELEGATION_DEPTH, [ref]$depth)
 }
 if ($depth -ge 1) {
-    throw "Refusing recursive delegation: AGENT_DELEGATION_DEPTH=$depth."
+    [Console]::Error.WriteLine("Refusing recursive delegation: AGENT_DELEGATION_DEPTH=$depth.")
+    exit $EXIT_ALL_DEPLETED
 }
 
 if ($ApproveForMe -and $Sandbox -ne 'workspace-write') {
@@ -313,7 +323,7 @@ if ($extension -eq '.cmd' -or $extension -eq '.bat') {
 }
 
 $previousDepth = $env:AGENT_DELEGATION_DEPTH
-$exitCode = 1
+$exitCode = $EXIT_GENERIC_FAILURE
 $timedOut = $false
 $stdout = ''
 $stderr = ''
@@ -339,11 +349,11 @@ try {
     if (-not $process.Start()) { throw 'Failed to start the Codex worker process.' }
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
     $stderrTask = $process.StandardError.ReadToEndAsync()
-    if (-not $process.WaitForExit($TimeoutSec * 1000)) {
+    if (-not $process.WaitForExit($(if ($TimeoutSec -gt 0) { $TimeoutSec * 1000 } else { -1 }))) {
         $timedOut = $true
         Stop-DelegatedProcessTree $process
         $null = $process.WaitForExit(10000)
-        $exitCode = 124
+        $exitCode = $EXIT_TIMEOUT
     }
     else {
         $process.WaitForExit()
@@ -359,8 +369,11 @@ finally {
 
 $isAuthFailure = ($exitCode -ne 0) -and ($stdout + "`n" + $stderr -match '(?i)(Authentication required|Please sign in|not logged in|codex login|sign in to your account|unauthorized)')
 if ($isAuthFailure) {
-    $exitCode = 78
+    $exitCode = $EXIT_CONFIG_AUTH_ERROR
     $loginGuidance = "Codex CLI is not logged in. Run 'codex login' interactively, complete sign-in, then retry the delegated task."
+    if ([Security.Principal.WindowsIdentity]::GetCurrent().Name -match '(?i)\\CodexSandbox(?:Offline)?$') {
+        $loginGuidance += ' Use the approved host-execution path to access host authentication from this sandbox.'
+    }
     if ($stdout -and -not $stdout.EndsWith([Environment]::NewLine)) { $stdout += [Environment]::NewLine }
     $stdout += $loginGuidance
     if ($stderr -and -not $stderr.Contains("codex login")) {
@@ -369,6 +382,22 @@ if ($isAuthFailure) {
     elseif (-not $stderr) {
         $stderr = $loginGuidance
     }
+}
+elseif (-not $timedOut -and ($exitCode -ne 0) -and
+    ($stdout + "`n" + $stderr -match '(?i)(insufficient[_ -]?quota|quota\s+(?:has\s+been\s+)?(?:exceeded|exhausted|depleted|used\s+up)|usage\s+(?:limit|cap)\s+(?:has\s+been\s+)?(?:reached|exceeded|exhausted)|(?:daily|weekly|monthly)\s+(?:usage\s+)?limit\s+(?:reached|exceeded|exhausted)|you(?:''ve| have)\s+(?:hit|reached|exceeded)\s+(?:your\s+)?(?:usage\s+)?limit|rate[_ -]?limit(?:ed|\s+(?:reached|exceeded))?|too\s+many\s+requests|resource[_ -]?exhausted|(?:out\s+of|no|insufficient)\s+credits?|credits?\s+(?:are\s+)?(?:exhausted|depleted)|credit\s+balance\s+(?:is\s+)?(?:too\s+low|empty)|(?:http\s*)?429\b)')) {
+    $exitCode = $EXIT_QUOTA_EXCEEDED
+}
+
+$environmentSignature = 'helper_unknown_error|setup refresh had errors|Failed to create unified exec process|windows sandbox failed'
+$transcript = $stdout + "`n" + $stderr
+if (-not $timedOut -and $exitCode -ne $EXIT_CONFIG_AUTH_ERROR -and
+    $transcript -notmatch '(?im)^\s*succeeded in \d+ms:' -and
+    $transcript -match "(?im)^\s*(?:$environmentSignature)|exec_command failed:.*(?:$environmentSignature)") {
+    # Codex can return zero after failing to initialize its execution environment.
+    # Only Codex's own diagnostics count, and only when no command ever succeeded:
+    # matching anywhere would misfire on file contents it printed (e.g. AI_HANDOFF.md).
+    # Keep this value aligned with EXIT_CODES.ENVIRONMENT_FAILURE in core/types.ts.
+    $exitCode = $EXIT_ENVIRONMENT_FAILURE
 }
 
 if ($stdout) { [Console]::Out.Write($stdout) }

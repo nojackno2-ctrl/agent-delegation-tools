@@ -1,11 +1,15 @@
+import { dispatchJob, ToolContext, ToolResponse } from './execution.js';
 import { z } from 'zod';
 import { invokeAgy } from '../services/invokers/agy-invoker.js';
 import { invokeCodex } from '../services/invokers/codex-invoker.js';
 import { invokeClaude } from '../services/invokers/claude-invoker.js';
-import { DEFAULT_MODELS } from '../core/defaults.js';
+import { DEFAULT_MODELS, DEFAULT_SANDBOX } from '../core/defaults.js';
+import { capOutputTail, generateRunId, writeRunLog } from '../core/logging.js';
+import { validateWorkDir } from '../utils/validation.js';
 
 // --- Antigravity (AGY) Invoker ---
 export const invokeAgySchema = z.object({
+  async: z.boolean().optional().default(false).describe('Return a job_id immediately and poll get_job_result; false waits synchronously.'),
   prompt: z.string().min(1).describe('Instruction or task for Antigravity subagent.'),
   mode: z
     .enum(['plan', 'accept-edits', 'read-only', 'workspace-write'])
@@ -18,19 +22,26 @@ export const invokeAgySchema = z.object({
     .string()
     .optional()
     .default(DEFAULT_MODELS.agy.model)
-    .describe('Model name. Defaults to gemini-3.8-flash; gemini-3.1-pro for deep architecture work.'),
+    .describe(`Model name. Defaults to ${DEFAULT_MODELS.agy.model}; gemini-3.1-pro for deep architecture work.`),
   effort: z
     .enum(['low', 'medium', 'high'])
     .optional()
     .default(DEFAULT_MODELS.agy.effort)
-    .describe('Thinking effort. Defaults to medium.'),
-  work_dir: z.string().optional().describe('Working directory.'),
-  timeout_sec: z.number().int().min(10).max(3600).optional().default(900),
+    .describe(`Thinking effort. Defaults to ${DEFAULT_MODELS.agy.effort}.`),
+  work_dir: z.string().min(1).describe('Absolute path to existing working directory.'),
+  timeout_sec: z.number().int().min(0).max(86400).optional().default(0).describe('Optional timeout in seconds. Default 0 = no limit.'),
 });
 
-export type InvokeAgyInput = z.infer<typeof invokeAgySchema>;
+export type InvokeAgyInput = z.input<typeof invokeAgySchema>;
 
-export async function handleInvokeAgy(input: InvokeAgyInput) {
+export async function handleInvokeAgy(rawInput: InvokeAgyInput, context: ToolContext = {}): Promise<ToolResponse> {
+  const dirCheck = validateWorkDir(rawInput.work_dir);
+  if (!dirCheck.valid) {
+    return { isError: true, content: [{ type: 'text', text: dirCheck.error! }] };
+  }
+
+  const input = invokeAgySchema.parse(rawInput);
+  if (input.async) return dispatchJob('invoke_agy', jobContext => handleInvokeAgy({ ...input, async: false }, jobContext));
   try {
     const result = await invokeAgy({
       prompt: input.prompt,
@@ -38,18 +49,31 @@ export async function handleInvokeAgy(input: InvokeAgyInput) {
       model: input.model,
       effort: input.effort,
       workDir: input.work_dir,
+      signal: context.signal,
+      onProgress: context.onProgress,
       timeoutSec: input.timeout_sec,
     });
 
+    const runId = generateRunId();
+    const logPath = writeRunLog(runId, 'agy', result.stdout, result.stderr);
+    result.logPath = logPath;
+
+    context.onResult?.({ exitCode: result.exitCode, usedAgent: 'agy', logPath });
     const textOutput = result.output || result.stdout || result.stderr;
+    const logLine = `Log: ${logPath}\n\n`;
+
     if (result.exitCode !== 0) {
+      const parts: string[] = [];
+      if (result.stdout && result.stdout.trim()) parts.push(`Stdout:\n${capOutputTail(result.stdout, 10000, logPath)}`);
+      if (result.stderr && result.stderr.trim()) parts.push(`Stderr:\n${capOutputTail(result.stderr, 10000, logPath)}`);
+      const failureDetails = parts.length > 0 ? parts.join('\n\n') : (capOutputTail(textOutput, 10000, logPath) || 'No output recorded.');
       return {
         isError: true,
-        content: [{ type: 'text', text: `AGY subagent failed (Exit ${result.exitCode}):\n${result.stderr || textOutput}` }],
+        content: [{ type: 'text', text: `AGY subagent failed (Exit ${result.exitCode}):\n${logLine}${failureDetails}` }],
       };
     }
 
-    return { content: [{ type: 'text', text: textOutput.trim() || 'AGY subagent completed.' }] };
+    return { content: [{ type: 'text', text: `${logLine}${capOutputTail(textOutput, 20000, logPath).trim() || 'AGY subagent completed.'}` }] };
   } catch (error: any) {
     return { isError: true, content: [{ type: 'text', text: `AGY invocation error: ${error?.message || String(error)}` }] };
   }
@@ -57,11 +81,12 @@ export async function handleInvokeAgy(input: InvokeAgyInput) {
 
 // --- Codex Invoker ---
 export const invokeCodexSchema = z.object({
+  async: z.boolean().optional().default(false).describe('Return a job_id immediately and poll get_job_result; false waits synchronously.'),
   prompt: z.string().min(1).describe('Instruction or task for Codex subagent.'),
   sandbox: z
     .enum(['read-only', 'workspace-write', 'danger-full-access'])
     .optional()
-    .default('workspace-write')
+    .default(DEFAULT_SANDBOX)
     .describe(
       'Codex sandbox permission boundary. Defaults to workspace-write: the subagent edits files under work_dir and approvals are auto-handled, so the run never blocks on a prompt.'
     ),
@@ -69,19 +94,26 @@ export const invokeCodexSchema = z.object({
     .string()
     .optional()
     .default(DEFAULT_MODELS.codex.model)
-    .describe('Model for Codex CLI. Defaults to gpt-6-luna.'),
+    .describe(`Model for Codex CLI. Defaults to ${DEFAULT_MODELS.codex.model}.`),
   effort: z
     .string()
     .optional()
     .default(DEFAULT_MODELS.codex.effort)
-    .describe('Reasoning effort (low|medium|high|xhigh|max). Defaults to medium.'),
-  work_dir: z.string().optional().describe('Working directory.'),
-  timeout_sec: z.number().int().min(10).max(3600).optional().default(900),
+    .describe(`Reasoning effort (low|medium|high|xhigh|max). Defaults to ${DEFAULT_MODELS.codex.effort}.`),
+  work_dir: z.string().min(1).describe('Absolute path to existing working directory.'),
+  timeout_sec: z.number().int().min(0).max(86400).optional().default(0).describe('Optional timeout in seconds. Default 0 = no limit.'),
 });
 
-export type InvokeCodexInput = z.infer<typeof invokeCodexSchema>;
+export type InvokeCodexInput = z.input<typeof invokeCodexSchema>;
 
-export async function handleInvokeCodex(input: InvokeCodexInput) {
+export async function handleInvokeCodex(rawInput: InvokeCodexInput, context: ToolContext = {}): Promise<ToolResponse> {
+  const dirCheck = validateWorkDir(rawInput.work_dir);
+  if (!dirCheck.valid) {
+    return { isError: true, content: [{ type: 'text', text: dirCheck.error! }] };
+  }
+
+  const input = invokeCodexSchema.parse(rawInput);
+  if (input.async) return dispatchJob('invoke_codex', jobContext => handleInvokeCodex({ ...input, async: false }, jobContext));
   try {
     const result = await invokeCodex({
       prompt: input.prompt,
@@ -89,18 +121,31 @@ export async function handleInvokeCodex(input: InvokeCodexInput) {
       model: input.model,
       effort: input.effort,
       workDir: input.work_dir,
+      signal: context.signal,
+      onProgress: context.onProgress,
       timeoutSec: input.timeout_sec,
     });
 
+    const runId = generateRunId();
+    const logPath = writeRunLog(runId, 'codex', result.stdout, result.stderr);
+    result.logPath = logPath;
+
+    context.onResult?.({ exitCode: result.exitCode, usedAgent: 'codex', logPath });
     const textOutput = result.output || result.stdout || result.stderr;
+    const logLine = `Log: ${logPath}\n\n`;
+
     if (result.exitCode !== 0) {
+      const parts: string[] = [];
+      if (result.stdout && result.stdout.trim()) parts.push(`Stdout:\n${capOutputTail(result.stdout, 10000, logPath)}`);
+      if (result.stderr && result.stderr.trim()) parts.push(`Stderr:\n${capOutputTail(result.stderr, 10000, logPath)}`);
+      const failureDetails = parts.length > 0 ? parts.join('\n\n') : (capOutputTail(textOutput, 10000, logPath) || 'No output recorded.');
       return {
         isError: true,
-        content: [{ type: 'text', text: `Codex subagent failed (Exit ${result.exitCode}):\n${result.stderr || textOutput}` }],
+        content: [{ type: 'text', text: `Codex subagent failed (Exit ${result.exitCode}):\n${logLine}${failureDetails}` }],
       };
     }
 
-    return { content: [{ type: 'text', text: textOutput.trim() || 'Codex subagent completed.' }] };
+    return { content: [{ type: 'text', text: `${logLine}${capOutputTail(textOutput, 20000, logPath).trim() || 'Codex subagent completed.'}` }] };
   } catch (error: any) {
     return { isError: true, content: [{ type: 'text', text: `Codex invocation error: ${error?.message || String(error)}` }] };
   }
@@ -108,11 +153,12 @@ export async function handleInvokeCodex(input: InvokeCodexInput) {
 
 // --- Claude Code Invoker ---
 export const invokeClaudeSchema = z.object({
+  async: z.boolean().optional().default(false).describe('Return a job_id immediately and poll get_job_result; false waits synchronously.'),
   prompt: z.string().min(1).describe('Instruction or task for Claude Code subagent.'),
   mode: z
     .enum(['plan', 'accept-edits', 'read-only', 'workspace-write', 'danger-full-access'])
     .optional()
-    .default('workspace-write')
+    .default(DEFAULT_SANDBOX)
     .describe(
       'Permission mode. Defaults to workspace-write, which runs the headless child unattended (no permission prompts) inside work_dir. Note: this backend spends the same Claude subscription quota as the parent, so prefer invoke_agy / invoke_codex.'
     ),
@@ -125,21 +171,28 @@ export const invokeClaudeSchema = z.object({
     .string()
     .optional()
     .default(DEFAULT_MODELS.claude.model)
-    .describe('Model. Defaults to claude-sonnet-5.'),
+    .describe(`Model. Defaults to ${DEFAULT_MODELS.claude.model}.`),
   effort: z
     .string()
     .optional()
     .default(DEFAULT_MODELS.claude.effort)
-    .describe('Effort level (low|medium|high|xhigh|max). Defaults to medium.'),
+    .describe(`Effort level (low|medium|high|xhigh|max). Defaults to ${DEFAULT_MODELS.claude.effort}.`),
   session_id: z.string().optional().describe('Resume or fork a previous session ID.'),
   resume: z.boolean().optional().describe('Resume the session specified by session_id.'),
-  work_dir: z.string().optional().describe('Working directory.'),
-  timeout_sec: z.number().int().min(10).max(3600).optional().default(900),
+  work_dir: z.string().min(1).describe('Absolute path to existing working directory.'),
+  timeout_sec: z.number().int().min(0).max(86400).optional().default(0).describe('Optional timeout in seconds. Default 0 = no limit.'),
 });
 
-export type InvokeClaudeInput = z.infer<typeof invokeClaudeSchema>;
+export type InvokeClaudeInput = z.input<typeof invokeClaudeSchema>;
 
-export async function handleInvokeClaude(input: InvokeClaudeInput) {
+export async function handleInvokeClaude(rawInput: InvokeClaudeInput, context: ToolContext = {}): Promise<ToolResponse> {
+  const dirCheck = validateWorkDir(rawInput.work_dir);
+  if (!dirCheck.valid) {
+    return { isError: true, content: [{ type: 'text', text: dirCheck.error! }] };
+  }
+
+  const input = invokeClaudeSchema.parse(rawInput);
+  if (input.async) return dispatchJob('invoke_claude', jobContext => handleInvokeClaude({ ...input, async: false }, jobContext));
   try {
     const result = await invokeClaude({
       prompt: input.prompt,
@@ -150,18 +203,31 @@ export async function handleInvokeClaude(input: InvokeClaudeInput) {
       sessionId: input.session_id,
       resume: input.resume,
       workDir: input.work_dir,
+      signal: context.signal,
+      onProgress: context.onProgress,
       timeoutSec: input.timeout_sec,
     });
 
+    const runId = generateRunId();
+    const logPath = writeRunLog(runId, 'claude', result.stdout, result.stderr);
+    result.logPath = logPath;
+
+    context.onResult?.({ exitCode: result.exitCode, usedAgent: 'claude', logPath });
     const textOutput = result.output || result.stdout || result.stderr;
+    const logLine = `Log: ${logPath}\n\n`;
+
     if (result.exitCode !== 0) {
+      const parts: string[] = [];
+      if (result.stdout && result.stdout.trim()) parts.push(`Stdout:\n${capOutputTail(result.stdout, 10000, logPath)}`);
+      if (result.stderr && result.stderr.trim()) parts.push(`Stderr:\n${capOutputTail(result.stderr, 10000, logPath)}`);
+      const failureDetails = parts.length > 0 ? parts.join('\n\n') : (capOutputTail(textOutput, 10000, logPath) || 'No output recorded.');
       return {
         isError: true,
-        content: [{ type: 'text', text: `Claude subagent failed (Exit ${result.exitCode}):\n${result.stderr || textOutput}` }],
+        content: [{ type: 'text', text: `Claude subagent failed (Exit ${result.exitCode}):\n${logLine}${failureDetails}` }],
       };
     }
 
-    return { content: [{ type: 'text', text: textOutput.trim() || 'Claude subagent completed.' }] };
+    return { content: [{ type: 'text', text: `${logLine}${capOutputTail(textOutput, 20000, logPath).trim() || 'Claude subagent completed.'}` }] };
   } catch (error: any) {
     return { isError: true, content: [{ type: 'text', text: `Claude invocation error: ${error?.message || String(error)}` }] };
   }
