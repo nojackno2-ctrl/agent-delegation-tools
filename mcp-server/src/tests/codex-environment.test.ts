@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { invokeCodex, isCodexEnvironmentFailure } from '../services/invokers/codex-invoker.js';
+import { invokeAgy } from '../services/invokers/agy-invoker.js';
 import { delegateTask } from '../services/dispatcher/delegate-service.js';
 import { delegateParallel } from '../services/dispatcher/parallel-service.js';
 import { clearExecutableCache } from '../core/executables.js';
@@ -89,6 +90,29 @@ test('fallback_agent none pins the run to the primary even with quota balancing 
     clearExecutableCache();
     clearQuotaCache();
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('agy invoker registers work_dir as the first --add-dir workspace', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-agy-workspace-'));
+  const extra = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-agy-extra-'));
+  const oldDepth = process.env.AGENT_DELEGATION_DEPTH;
+  try {
+    process.env.AGENT_DELEGATION_DEPTH = '0';
+    const script = path.join(dir, 'echo-args.cjs');
+    fs.writeFileSync(script, 'console.log(JSON.stringify(process.argv.slice(2)));');
+    const agy = path.join(dir, process.platform === 'win32' ? 'agy.cmd' : 'agy');
+    fs.writeFileSync(agy, process.platform === 'win32'
+      ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\nexit /b 0\r\n`
+      : `#!/bin/sh\n"${process.execPath}" "${script}" "$@"\n`, { mode: 0o755 });
+    const result = await invokeAgy({ prompt: 'fake only', agyPath: agy, workDir: dir, addDirs: [extra, dir] });
+    const args: string[] = JSON.parse(result.stdout.trim().split(/\r?\n/).pop() ?? '[]');
+    const addDirs = args.flatMap((arg, i) => (arg === '--add-dir' ? [args[i + 1]] : []));
+    assert.deepEqual(addDirs, [path.resolve(dir), path.resolve(extra)]);
+  } finally {
+    if (oldDepth === undefined) delete process.env.AGENT_DELEGATION_DEPTH; else process.env.AGENT_DELEGATION_DEPTH = oldDepth;
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(extra, { recursive: true, force: true });
   }
 });
 

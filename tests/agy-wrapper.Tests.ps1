@@ -84,7 +84,10 @@ try {
     Assert-Equal 'plan' $arguments[[Array]::IndexOf($arguments, '--mode') + 1] 'AGY must default to read-only plan mode.'
     Assert-Equal 'json' $arguments[[Array]::IndexOf($arguments, '--output-format') + 1] 'AGY output format was not forwarded.'
     Assert-Equal '7m' $arguments[[Array]::IndexOf($arguments, '--print-timeout') + 1] 'AGY print timeout was not forwarded.'
-    Assert-Equal $addDir $arguments[[Array]::IndexOf($arguments, '--add-dir') + 1] 'AGY additional directory was not forwarded.'
+    $firstAddDir = [Array]::IndexOf($arguments, '--add-dir')
+    Assert-Equal $workDir $arguments[$firstAddDir + 1] 'AGY work directory must be registered as a workspace via --add-dir.'
+    Assert-Equal '--add-dir' $arguments[$firstAddDir + 2] 'AGY additional directory flag is missing.'
+    Assert-Equal $addDir $arguments[$firstAddDir + 3] 'AGY additional directory was not forwarded.'
     Assert-Equal $workDir ([IO.File]::ReadAllText($cwdFile, [Text.Encoding]::UTF8)) 'AGY working directory was not applied.'
     Assert-Equal '1' ([IO.File]::ReadAllText($depthFile, [Text.Encoding]::UTF8)) 'AGY child should receive recursion depth 1.'
     Assert-Equal $expectedOutput ([IO.File]::ReadAllText($outFile, [Text.Encoding]::UTF8)) 'AGY output file content changed.'

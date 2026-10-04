@@ -97,7 +97,9 @@ try {
     Assert-True (-not (Test-Path -LiteralPath $codexArgsFile)) 'Analysis dispatch must not also launch Codex.'
     $analysisArguments = Read-RecordedArguments $agyArgsFile
     Assert-Equal 'plan' $analysisArguments[[Array]::IndexOf($analysisArguments, '--mode') + 1] 'Default dispatcher analysis must be read-only.'
-    Assert-Equal $addDir $analysisArguments[[Array]::IndexOf($analysisArguments, '--add-dir') + 1] 'Dispatcher did not forward AGY AddDir.'
+    $firstAnalysisAddDir = [Array]::IndexOf($analysisArguments, '--add-dir')
+    Assert-Equal $workDir $analysisArguments[$firstAnalysisAddDir + 1] 'Dispatcher must register the AGY work directory via --add-dir.'
+    Assert-Equal $addDir $analysisArguments[$firstAnalysisAddDir + 3] 'Dispatcher did not forward AGY AddDir.'
     Assert-Equal $prompt $analysisArguments[1] 'Dispatcher changed the AGY prompt.'
     Assert-Equal 'gemini-3.8-flash' $analysisArguments[[Array]::IndexOf($analysisArguments, '--model') + 1] 'Default AGY model must be gemini-3.8-flash.'
     Assert-Equal 'medium' $analysisArguments[[Array]::IndexOf($analysisArguments, '--effort') + 1] 'Default AGY effort must be medium.'

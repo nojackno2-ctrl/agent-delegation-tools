@@ -8,6 +8,12 @@
 - Known open issues: reconnect hosts after rebuilding; desktop request timeouts require dispatch/poll; AGY startup/auth latency can exceed quota-read deadlines; Codex sandbox ACL setup can fail for orphaned repo ownership; read-only nested MCP calls can require approval. Only Codex workspace-write provides OS sandbox confinement; AGY/Claude write modes skip prompts.
 - Historical entries are preserved verbatim below. Older history: [docs/handoff-archive.md](docs/handoff-archive.md).
 
+## 2026-10-04 Merge origin/master (234f507) into feat/async-jobs-hardening
+
+- origin/master had gained 234f507 "background delegation job tracking" (job-store.ts + get_delegation_result, 45s inline wait, no cancellation; older model defaults gpt-6-luna/claude-sonnet-5). With explicit user approval (option 1), conflicts were resolved in favor of this branch's job-registry design (immediate job_id, get_job_status/get_job_result/cancel_job, tree-kill cancellation); job-store.ts, its test, and master's re-modified root mirrors/in-repo SKILL copies were removed.
+- Ported from 234f507: AGY always registers work_dir as the first `--add-dir` (AGY does not treat cwd as a workspace) in agy-invoker.ts and agy.ps1, and, when a timeout is set, the outer kill waits timeoutSec+30s so AGY's own --print-timeout flushes output first. Tests updated plus a new Node test for add-dir order. Master's handoff entries (2026-09-04..09-25) were archived verbatim in date order in docs/handoff-archive.md.
+- Verification: `npm test` 96/96, lint clean; tests/run-all.ps1 9/9.
+
 ## 2026-10-04 BOM fix, cleanup, and Codex false environment-failure fix
 
 - **BOM bug (root cause)**: Windows PowerShell 5.1 runs on .NET Framework, whose ProcessStartInfo has no StandardInputEncoding. Setting it threw inside a shared `try`, which also skipped the stdout/stderr encodings. .NET Framework then builds the redirected stdin writer from `[Console]::InputEncoding` and flushes its preamble at `Start()`, so under code page 65001 every child received a UTF-8 BOM. Fix: claude.ps1 and status.ps1 (`Start-ProcessWithoutStdinBom`) temporarily set `[Console]::InputEncoding` to BOM-less UTF-8 around `Start()` and set output encodings outside the try. tests/fixtures/fake-claude.ps1 now decodes raw stdin bytes as UTF-8, like the real Node CLI.

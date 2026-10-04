@@ -220,7 +220,10 @@ if ($effectiveModel) {
 }
 
 $agyArgs = @('-p', $Prompt, '--mode', $effectiveMode, '--output-format', $OutputFormat, '--print-timeout', $PrintTimeout)
-foreach ($directory in $resolvedAddDirs) { $agyArgs += @('--add-dir', $directory) }
+# AGY does not treat its working directory as a workspace; without --add-dir it
+# runs with "No active workspace" and cannot resolve repository-relative paths.
+$workspaceDirs = @($resolvedWorkDir) + @($resolvedAddDirs | Where-Object { $_ -and $_ -ne $resolvedWorkDir })
+foreach ($directory in $workspaceDirs) { $agyArgs += @('--add-dir', $directory) }
 if ($effectiveModel)  { $agyArgs += @('--model', $effectiveModel) }
 if ($effectiveEffort) { $agyArgs += @('--effort', $effectiveEffort) }
 if ($SkipPermissions) { $agyArgs += '--dangerously-skip-permissions' }

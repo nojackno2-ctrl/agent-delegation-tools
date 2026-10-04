@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { resolveAgyExecutable } from '../../core/executables.js';
 import { spawnProcess } from '../../core/process.js';
 import { ExecutionResult, EXIT_CODES } from '../../core/types.js';
@@ -99,18 +100,21 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
     args.push('--dangerously-skip-permissions');
   }
 
-  if (options.addDirs) {
-    for (const d of options.addDirs) {
-      if (d) args.push('--add-dir', d);
-    }
+  // AGY does not treat its cwd as a workspace: without --add-dir it runs with
+  // "No active workspace", cannot resolve relative paths, and wanders the drives.
+  const workDir = path.resolve(options.workDir || process.cwd());
+  const workspaceDirs = [workDir, ...(options.addDirs || []).filter(Boolean).map((d) => path.resolve(d))];
+  for (const d of new Set(workspaceDirs)) {
+    args.push('--add-dir', d);
   }
 
-  // 0/undefined = no limit: long-running subagents are left to finish.
-  const timeoutMs = (options.timeoutSec ?? 0) * 1000;
+  // 0/undefined = no limit: long-running subagents are left to finish. With a
+  // limit, AGY's own --print-timeout fires first so its output is flushed.
+  const timeoutMs = options.timeoutSec ? (options.timeoutSec + 30) * 1000 : 0;
   const result = await spawnProcess({
     executable,
     args,
-    cwd: options.workDir || process.cwd(),
+    cwd: workDir,
     timeoutMs,
     signal: options.signal,
     onStdout: () => options.onProgress?.('agy'),
