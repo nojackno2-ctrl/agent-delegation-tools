@@ -24,7 +24,7 @@ export const tools = [
   {
     name: 'delegate_task',
     description:
-      'PREFERRED way to get work done: hand a task to an external subagent CLI instead of doing it in the parent agent. Auto-routes by task type and live quota (agy = Gemini 3.7 Flash high, codex = GPT-5.6-Luna high), fails over when a provider is depleted, and runs write-capable by default so the subagent edits files under work_dir without any approval prompt.',
+      'PREFERRED way to get work done: hand a task to an external subagent CLI instead of doing it in the parent agent. Auto-routes by task type and live quota (agy = Gemini 3.8 Flash medium, codex = GPT-6.1 Sol medium), fails over when a provider is depleted, and runs write-capable by default so the subagent edits files under work_dir without any approval prompt.',
     schema: delegateTaskSchema,
   },
   {
@@ -36,19 +36,19 @@ export const tools = [
   {
     name: 'invoke_agy',
     description:
-      'Directly invoke the Google Antigravity (AGY) CLI subagent. Defaults: gemini-3.7-flash, effort high, accept-edits mode with permission prompts skipped.',
+      'Directly invoke the Google Antigravity (AGY) CLI subagent. Defaults: gemini-3.8-flash, effort medium, accept-edits mode with permission prompts skipped.',
     schema: invokeAgySchema,
   },
   {
     name: 'invoke_codex',
     description:
-      'Directly invoke the OpenAI Codex CLI subagent. Defaults: gpt-5.6-luna, effort high, workspace-write sandbox with approvals auto-handled. Handles non-ASCII Windows paths via junction aliases.',
+      'Directly invoke the OpenAI Codex CLI subagent. Defaults: gpt-6.1-sol, effort medium, workspace-write sandbox with approvals auto-handled. Handles non-ASCII Windows paths via junction aliases.',
     schema: invokeCodexSchema,
   },
   {
     name: 'invoke_claude',
     description:
-      'Directly invoke the Anthropic Claude CLI subagent (claude-sonnet-5, effort high) with token-isolated context (--safe-mode) and session resume. Last resort: it spends the same subscription quota as the parent agent, so prefer invoke_agy / invoke_codex.',
+      'Directly invoke the Anthropic Claude CLI subagent (claude-sonnet-5-5, effort medium) with token-isolated context (--safe-mode) and session resume. Last resort: it spends the same subscription quota as the parent agent, so prefer invoke_agy / invoke_codex.',
     schema: invokeClaudeSchema,
   },
 ];
@@ -165,10 +165,16 @@ export function isDelegationSection(rawName: string | null): boolean {
   );
 }
 
+/**
+ * Subagents run without a time limit, so the hosts must not abandon a
+ * long-running delegation call either: 24 hours per MCP tool call.
+ */
+export const HOST_TOOL_TIMEOUT_SEC = 86_400;
+
 export function buildCodexTomlSection(nodePath: string, serverPath: string): string {
   const nodeToml = JSON.stringify(nodePath);
   const serverToml = JSON.stringify(serverPath);
-  return `[mcp_servers.agent_delegation]\ncommand = ${nodeToml}\nargs = [${serverToml}]`;
+  return `[mcp_servers.agent_delegation]\ncommand = ${nodeToml}\nargs = [${serverToml}]\ntool_timeout_sec = ${HOST_TOOL_TIMEOUT_SEC}`;
 }
 
 export function updateCodexToml(
@@ -263,9 +269,24 @@ Standard Model Context Protocol (MCP) tool suite for subagent delegation and quo
   console.log(`[OK] Antigravity Tool Schemas: ${mcpDir}`);
 }
 
+/**
+ * Antigravity's IDE user data moved from %APPDATA%\Antigravity to
+ * %APPDATA%\Antigravity IDE. Prefer the current folder and fall back to the
+ * legacy one; returns null when neither User folder exists.
+ */
+export const ANTIGRAVITY_APPDATA_DIRS = ['Antigravity IDE', 'Antigravity'];
+
+export function resolveAntigravityUserSettingsPath(appdata: string): string | null {
+  for (const dir of ANTIGRAVITY_APPDATA_DIRS) {
+    const userDir = path.join(appdata, dir, 'User');
+    if (fs.existsSync(userDir)) return path.join(userDir, 'settings.json');
+  }
+  return null;
+}
+
 export function registerAntigravityUserSettings(appdata: string, serverPath: string, nodePath: string = resolveNodePath()) {
-  const settingsPath = path.join(appdata, 'Antigravity', 'User', 'settings.json');
-  if (fs.existsSync(path.dirname(settingsPath))) {
+  const settingsPath = resolveAntigravityUserSettingsPath(appdata);
+  if (settingsPath) {
     let settings: any = {};
     if (fs.existsSync(settingsPath)) {
       try {
@@ -320,6 +341,29 @@ export function registerClaudeCli(home: string, serverPath: string, nodePath: st
   }
 }
 
+/**
+ * Claude Code reads its MCP tool-call timeout (milliseconds) from the
+ * MCP_TOOL_TIMEOUT environment variable; set it through ~/.claude/settings.json
+ * while preserving every other setting.
+ */
+export function updateClaudeSettingsTimeout(settings: any): any {
+  const next = settings && typeof settings === 'object' ? { ...settings } : {};
+  next.env = { ...(next.env || {}), MCP_TOOL_TIMEOUT: String(HOST_TOOL_TIMEOUT_SEC * 1000) };
+  return next;
+}
+
+export function registerClaudeToolTimeout(home: string) {
+  const configPath = path.join(home, '.claude', 'settings.json');
+  try {
+    const original = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : {};
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify(updateClaudeSettingsTimeout(original), null, 2), 'utf8');
+    console.log(`[OK] Claude Code MCP_TOOL_TIMEOUT: ${configPath}`);
+  } catch (e: any) {
+    console.warn(`[WARN] Failed to update ${configPath}: ${e.message}`);
+  }
+}
+
 export function registerCodex(home: string, serverPath: string, nodePath: string = resolveNodePath()) {
   const configPath = path.join(home, '.codex', 'config.toml');
   if (fs.existsSync(configPath)) {
@@ -345,6 +389,7 @@ export function registerAll(nodePath: string = resolveNodePath()) {
   registerAntigravityUserSettings(appdata, serverIndexPath, nodePath);
   registerClaudeDesktop(appdata, serverIndexPath, nodePath);
   registerClaudeCli(home, serverIndexPath, nodePath);
+  registerClaudeToolTimeout(home);
   registerCodex(home, serverIndexPath, nodePath);
 
   console.log('\n=== All AI Client Registrations Complete! ===');

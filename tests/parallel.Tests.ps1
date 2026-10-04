@@ -40,7 +40,6 @@ $canonicalWrapper = if ($env:TEST_PARALLEL_WRAPPER) {
 else {
     Join-Path $repositoryRoot 'skills\agent-delegation-tools\scripts\parallel.ps1'
 }
-$compatibilityWrapper = Join-Path $repositoryRoot 'parallel.ps1'
 $script:fakeDelegate = Join-Path $PSScriptRoot 'fixtures\fake-delegate.ps1'
 $safeTempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $testRoot = [IO.Path]::GetFullPath((Join-Path $safeTempRoot ("parallel-wrapper-{0}" -f [Guid]::NewGuid().ToString('N'))))
@@ -120,10 +119,6 @@ try {
     Assert-True (($scope.Output -join [Environment]::NewLine).Contains('write scopes overlap')) 'Overlap rejection should explain the conflicting scopes.'
 
     Remove-Item -LiteralPath (Join-Path $barrierDir 'alpha.started'), (Join-Path $barrierDir 'beta.started') -Force
-    $forwardedResults = Join-Path $testRoot 'forwarded-results'
-    $forwarded = Invoke-ParallelTest -Wrapper $compatibilityWrapper -TaskFile $parallelTaskFile -ResultsDir $forwardedResults
-    Assert-Equal 0 $forwarded.ExitCode ('Root parallel forwarder failed: ' + ($forwarded.Output -join [Environment]::NewLine))
-
     'parallel.Tests.ps1: all tests passed.'
 }
 finally {

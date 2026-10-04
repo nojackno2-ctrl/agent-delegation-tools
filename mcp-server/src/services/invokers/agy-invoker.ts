@@ -1,5 +1,3 @@
-import * as path from 'node:path';
-import * as os from 'node:os';
 import * as fs from 'node:fs';
 import { resolveAgyExecutable } from '../../core/executables.js';
 import { spawnProcess } from '../../core/process.js';
@@ -15,11 +13,15 @@ export interface InvokeAgyOptions {
   addDirs?: string[];
   outFile?: string;
   timeoutSec?: number;
+  signal?: AbortSignal;
+  onProgress?: (agent: string) => void;
   agyPath?: string;
   skipPermissions?: boolean;
 }
 
 export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionResult> {
+  if (options.signal?.aborted) return { exitCode: EXIT_CODES.CANCELLED, stdout: '', stderr: 'Invocation cancelled.', durationMs: 0, cancelled: true };
+  options.onProgress?.('agy');
   let executable: string;
   try {
     executable = resolveAgyExecutable(options.agyPath);
@@ -43,10 +45,34 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
   let effectiveEffort = options.effort;
 
   // Normalize model and effort aliases
-  const effortMatch = effectiveModel.match(/^gemini[ -]?3\.7[ -]?flash\s*\((high|medium|low)\)$/i);
-  if (effortMatch) {
-    effectiveModel = 'gemini-3.7-flash';
-    if (!effectiveEffort) effectiveEffort = effortMatch[1].toLowerCase() as any;
+  const flashMatch = effectiveModel.match(/^gemini[ -]?(3\.[5-8])[ -]?flash\s*\((high|medium|low)\)$/i);
+  if (flashMatch) {
+    effectiveModel = `gemini-${flashMatch[1]}-flash`;
+    if (!effectiveEffort) effectiveEffort = flashMatch[2].toLowerCase() as any;
+  }
+  const flashDashMatch = effectiveModel.match(/^gemini[ -]?(3\.[5-8])[ -]?flash-(high|medium|low)$/i);
+  if (flashDashMatch) {
+    effectiveModel = `gemini-${flashDashMatch[1]}-flash`;
+    if (!effectiveEffort) effectiveEffort = flashDashMatch[2].toLowerCase() as any;
+  }
+  const proMatch = effectiveModel.match(/^gemini[ -]?(3\.1)[ -]?pro\s*\((high|low)\)$/i);
+  if (proMatch) {
+    effectiveModel = 'gemini-3.1-pro';
+    if (!effectiveEffort) effectiveEffort = proMatch[2].toLowerCase() as any;
+  }
+  const claudeMatch = effectiveModel.match(/^claude[ -]?(opus|sonnet)[ -]?(?:5\.5|5-5)\s*\((high|medium|low)\)$/i);
+  if (claudeMatch) {
+    effectiveModel = `claude-${claudeMatch[1].toLowerCase()}-5-5`;
+    if (!effectiveEffort) effectiveEffort = claudeMatch[2].toLowerCase() as any;
+  }
+  const claudeDashMatch = effectiveModel.match(/^claude[ -]?(opus|sonnet)[ -]?(?:5\.5|5-5)-(high|medium|low)$/i);
+  if (claudeDashMatch) {
+    effectiveModel = `claude-${claudeDashMatch[1].toLowerCase()}-5-5`;
+    if (!effectiveEffort) effectiveEffort = claudeDashMatch[2].toLowerCase() as any;
+  }
+  const gptOssMatch = effectiveModel.match(/^gpt[ -]?oss[ -]?120b(?:\s*\(medium\)|-medium)?$/i);
+  if (gptOssMatch) {
+    effectiveModel = 'gpt-oss-120b-medium';
   }
 
   // AGY CLI rejects Flash models without --effort, so always carry one.
@@ -62,7 +88,7 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
     '--output-format',
     'text',
     '--print-timeout',
-    '5m',
+    options.timeoutSec ? `${options.timeoutSec}s` : '0',
   ];
 
   if (effectiveModel) args.push('--model', effectiveModel);
@@ -79,12 +105,16 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
     }
   }
 
-  const timeoutMs = (options.timeoutSec || 900) * 1000;
+  // 0/undefined = no limit: long-running subagents are left to finish.
+  const timeoutMs = (options.timeoutSec ?? 0) * 1000;
   const result = await spawnProcess({
     executable,
     args,
     cwd: options.workDir || process.cwd(),
     timeoutMs,
+    signal: options.signal,
+    onStdout: () => options.onProgress?.('agy'),
+    onStderr: () => options.onProgress?.('agy'),
   });
 
   const combinedOutput = result.stdout + (result.stderr ? '\n' + result.stderr : '');
@@ -96,6 +126,8 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
       // ignore
     }
   }
+
+  if (result.cancelled || result.timedOut) return { ...result, output: combinedOutput.trim() };
 
   // Login failure detection
   if (/login|sign in|auth required|not authenticated/i.test(combinedOutput) && result.exitCode !== 0) {

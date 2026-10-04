@@ -24,6 +24,28 @@ param(
 $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 $utf8NoBom = New-Object Text.UTF8Encoding($false)
+
+function Start-ProcessWithoutStdinBom {
+    # .NET Framework builds a redirected stdin writer from the console input
+    # encoding and flushes its preamble at Start(), so under code page 65001 the
+    # child would receive a UTF-8 BOM. Swap in BOM-less UTF-8 just for the launch.
+    param([Parameter(Mandatory = $true)][Diagnostics.Process]$Process)
+    $previousInputEncoding = $null
+    try { $previousInputEncoding = [Console]::InputEncoding; [Console]::InputEncoding = $utf8NoBom } catch { }
+    try { return $Process.Start() }
+    finally {
+        if ($null -ne $previousInputEncoding) { try { [Console]::InputEncoding = $previousInputEncoding } catch { } }
+    }
+}
+
+$EXIT_SUCCESS = 0
+$EXIT_GENERIC_FAILURE = 1
+$EXIT_QUOTA_EXCEEDED = 10
+$EXIT_ALL_DEPLETED = 75
+$EXIT_CONFIG_AUTH_ERROR = 78
+$EXIT_ENVIRONMENT_FAILURE = 79
+$EXIT_TIMEOUT = 124
+$EXIT_CANCELLED = 130
 try { Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue } catch { }
 try { [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12 } catch { }
 
@@ -197,26 +219,27 @@ function Get-CodexStatus {
         $startInfo.RedirectStandardInput = $true
         $startInfo.RedirectStandardOutput = $true
         $startInfo.RedirectStandardError = $true
-        try {
-            $startInfo.StandardInputEncoding = $utf8NoBom
-            $startInfo.StandardOutputEncoding = [Text.Encoding]::UTF8
-            $startInfo.StandardErrorEncoding = [Text.Encoding]::UTF8
-        } catch { }
+        # Windows PowerShell 5.1 (.NET Framework) has no StandardInputEncoding, so it
+        # cannot share a try block with the output encodings it would otherwise skip.
+        $startInfo.StandardOutputEncoding = [Text.Encoding]::UTF8
+        $startInfo.StandardErrorEncoding = [Text.Encoding]::UTF8
 
         $process = New-Object Diagnostics.Process
         $process.StartInfo = $startInfo
-        if (-not $process.Start()) { throw 'Failed to start Codex app-server.' }
+        if (-not (Start-ProcessWithoutStdinBom $process)) { throw 'Failed to start Codex app-server.' }
         $stderrTask = $process.StandardError.ReadToEndAsync()
         $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
+        $stdin = $process.StandardInput
+        $stdin.NewLine = "`n"
 
-        $process.StandardInput.WriteLine('{"method":"initialize","id":0,"params":{"clientInfo":{"name":"agent_delegation_tools","title":"Agent Delegation Tools","version":"1.0.0"}}}')
-        $process.StandardInput.Flush()
+        $stdin.WriteLine('{"method":"initialize","id":0,"params":{"clientInfo":{"name":"agent_delegation_tools","title":"Agent Delegation Tools","version":"1.0.0"}}}')
+        $stdin.Flush()
         $initialize = Read-ProtocolResponse -Reader $process.StandardOutput -ResponseId 0 -DeadlineUtc $deadline
         if ($null -ne $initialize.error) { throw "Codex app-server initialize failed: $($initialize.error.message)" }
 
-        $process.StandardInput.WriteLine('{"method":"initialized","params":{}}')
-        $process.StandardInput.WriteLine('{"method":"account/rateLimits/read","id":1}')
-        $process.StandardInput.Flush()
+        $stdin.WriteLine('{"method":"initialized","params":{}}')
+        $stdin.WriteLine('{"method":"account/rateLimits/read","id":1}')
+        $stdin.Flush()
         $response = Read-ProtocolResponse -Reader $process.StandardOutput -ResponseId 1 -DeadlineUtc $deadline
         if ($null -ne $response.error) { throw "Codex usage query failed: $($response.error.message)" }
 
@@ -465,13 +488,13 @@ function Parse-AgyCliUsageOutput {
         })
     }
 
-    if ($windows.Count -eq 0) {
+    if (@($windows | Where-Object { $_.windowDurationMins -eq 10080 }).Count -eq 0) {
         return [ordered]@{
             agent = 'agy'
             availability = 'unavailable'
             observedAt = $ObservedAt.ToString('o')
-            message = 'Antigravity /usage returned no recognizable weekly or five-hour quota windows.'
-            windows = @()
+            message = 'Antigravity /usage returned no authoritative weekly quota window.'
+            windows = [object[]]($windows | ForEach-Object { $_ })
         }
     }
 
@@ -588,27 +611,30 @@ function Get-AgyStatus {
     }
 
     $cliFailure = $null
+    $deadline = [DateTime]::UtcNow.AddSeconds([Math]::Max(1, [Math]::Min($TimeoutSeconds, 120)))
     $agyProcess = $null
     try {
         $agyExecutable = Resolve-AgyExecutable
         $boundedTimeout = [Math]::Max(1, [Math]::Min($TimeoutSeconds, 120))
         $agyArgs = @(
             '-p', '/usage',
-            '--mode', 'plan',
             '--output-format', 'text',
-            '--print-timeout', "${boundedTimeout}s",
-            '--model', 'gemini-3.7-flash',
-            '--effort', 'low'
+            '--print-timeout', "${boundedTimeout}s"
         )
 
         $startInfo = New-Object Diagnostics.ProcessStartInfo
         $startInfo.FileName = $agyExecutable
+        if ([IO.Path]::GetExtension($agyExecutable) -eq '.ps1') {
+            $startInfo.FileName = Join-Path $PSHOME 'powershell.exe'
+            $agyArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $agyExecutable) + $agyArgs
+        }
         $startInfo.Arguments = ($agyArgs | ForEach-Object { Format-WindowsArgument ([string]$_) }) -join ' '
         $startInfo.WorkingDirectory = $resolvedWorkDir
         $startInfo.UseShellExecute = $false
         $startInfo.CreateNoWindow = $true
         $startInfo.RedirectStandardOutput = $true
         $startInfo.RedirectStandardError = $true
+        $startInfo.RedirectStandardInput = $true
         try {
             $startInfo.StandardOutputEncoding = [Text.Encoding]::UTF8
             $startInfo.StandardErrorEncoding = [Text.Encoding]::UTF8
@@ -616,7 +642,9 @@ function Get-AgyStatus {
 
         $agyProcess = New-Object Diagnostics.Process
         $agyProcess.StartInfo = $startInfo
-        if (-not $agyProcess.Start()) { throw 'Failed to start Antigravity CLI /usage.' }
+        if (-not (Start-ProcessWithoutStdinBom $agyProcess)) { throw 'Failed to start Antigravity CLI /usage.' }
+        # Do not inherit an MCP host's open protocol stdin. /usage takes no input.
+        $agyProcess.StandardInput.Close()
         $stdoutTask = $agyProcess.StandardOutput.ReadToEndAsync()
         $stderrTask = $agyProcess.StandardError.ReadToEndAsync()
         if (-not $agyProcess.WaitForExit($boundedTimeout * 1000)) {
@@ -642,6 +670,18 @@ function Get-AgyStatus {
         if ($agyProcess) {
             Stop-ChildProcessTree $agyProcess
             $agyProcess.Dispose()
+        }
+    }
+
+    # The authoritative query has spent its budget; short-window diagnostics
+    # cannot repair a missing weekly quota and must not extend a CLI timeout.
+    if ([DateTime]::UtcNow -ge $deadline) {
+        return [ordered]@{
+            agent = 'agy'
+            availability = 'unavailable'
+            observedAt = $observedAt.ToString('o')
+            message = $cliFailure
+            windows = @()
         }
     }
 
@@ -836,3 +876,5 @@ else {
 
 if ($resolvedOutFile) { [IO.File]::WriteAllText($resolvedOutFile, $rendered, $utf8NoBom) }
 Write-Output $rendered
+
+exit $EXIT_SUCCESS

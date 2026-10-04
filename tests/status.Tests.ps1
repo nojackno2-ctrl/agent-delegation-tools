@@ -12,7 +12,6 @@ function Assert-True {
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $script = Join-Path $repositoryRoot 'skills\agent-delegation-tools\scripts\status.ps1'
-$compatibilityScript = Join-Path $repositoryRoot 'status.ps1'
 $fakeCodex = Join-Path $PSScriptRoot 'fixtures\fake-codex-app-server.ps1'
 $testRoot = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) ("agent-delegation-status-{0}" -f [Guid]::NewGuid().ToString('N'))))
 $safeTempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
@@ -120,12 +119,6 @@ Claude and GPT models`tFive Hour Limit Remaining`t100%`t2026-08-24T17:38:51Z
     Assert-Equal 100 $agyClaudeFiveHour.remainingPercent 'AGY Claude/GPT five-hour remaining percentage should be 100%.'
     Assert-Equal 300 $agyClaudeFiveHour.windowDurationMins 'AGY Claude/GPT five-hour duration should be 300 minutes.'
 
-    # 2. Test Root forwarder compatibility
-    $rootJson = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $compatibilityScript `
-        -Agent codex -CodexPath $fakeCodex -WorkDir $testRoot -TimeoutSec 5 -Json
-    Assert-Equal 0 $LASTEXITCODE 'Root status forwarder should succeed.'
-    Assert-Equal 'available' (($rootJson -join [Environment]::NewLine | ConvertFrom-Json).availability) 'Root status forwarder changed the result.'
-
     # 3. Test Individual Agent Queries
     $claudeOnlyJson = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Agent claude -Json
     Assert-Equal 0 $LASTEXITCODE 'Claude-only query should succeed.'
@@ -149,6 +142,52 @@ Claude and GPT models`tFive Hour Limit Remaining`t100%`t2026-08-24T17:38:51Z
     Assert-True ($textCombined -match 'agy agy \(Gemini\) 7d: 20% remaining') 'Text rendering missing AGY Gemini weekly remaining info.'
 
     # 5. Test Error Handling / Unavailable Responses
+    # Exercise the actual child invocation, rather than bypassing it with fake output.
+    $usageRows = $env:FAKE_AGY_CLI_USAGE_OUTPUT
+    $previousAgyPath = $env:AGY_CLI_PATH
+    $fakeAgy = Join-Path $testRoot 'fake-agy.ps1'
+    [IO.File]::WriteAllText($fakeAgy, @'
+$ErrorActionPreference = 'Stop'
+[IO.File]::WriteAllLines($env:FAKE_AGY_ARGS_FILE, [string[]]$args)
+if ([Console]::In.ReadToEnd() -ne '') { throw 'Quota stdin must be empty.' }
+if ($env:FAKE_AGY_SLEEP_MS) { Start-Sleep -Milliseconds ([int]$env:FAKE_AGY_SLEEP_MS) }
+[Console]::WriteLine($env:FAKE_AGY_ROWS)
+'@, (New-Object Text.UTF8Encoding($false)))
+    $env:FAKE_AGY_ARGS_FILE = Join-Path $testRoot 'agy-args.txt'
+    $env:FAKE_AGY_ROWS = $usageRows
+    try {
+        Remove-Item -LiteralPath Env:FAKE_AGY_CLI_USAGE_OUTPUT, Env:FAKE_AGY_STATUS_RESPONSE
+        $env:AGY_CLI_PATH = $fakeAgy
+        foreach ($entryPoint in @($script)) {
+            $actualJson = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $entryPoint -Agent agy -TimeoutSec 5 -Json
+            Assert-Equal 0 $LASTEXITCODE 'Real AGY child invocation should complete.'
+            $actual = $actualJson -join [Environment]::NewLine | ConvertFrom-Json
+            Assert-Equal 'available' $actual.availability 'Actual AGY invocation should parse weekly rows.'
+            Assert-Equal 4 @($actual.windows).Count 'Actual invocation should retain all four windows.'
+            $actualArgs = [IO.File]::ReadAllLines($env:FAKE_AGY_ARGS_FILE)
+            Assert-Equal '-p|/usage|--output-format|text|--print-timeout|5s' ($actualArgs -join '|') 'Quota invocation must omit agent mode, model, and effort overrides.'
+        }
+        $env:FAKE_AGY_SLEEP_MS = '5000'
+        $timeoutTimer = [Diagnostics.Stopwatch]::StartNew()
+        $agyTimeoutJson = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Agent agy -TimeoutSec 1 -Json
+        $agyTimeout = $agyTimeoutJson -join [Environment]::NewLine | ConvertFrom-Json
+        Assert-Equal 'unavailable' $agyTimeout.availability 'AGY startup timeout must fail closed.'
+        Assert-True ($agyTimeout.message -match 'timed out after 1s') 'AGY timeout evidence must be preserved.'
+        Assert-Equal 0 @($agyTimeout.windows).Count 'Spent query budget must skip LS diagnostics.'
+        Assert-True ($timeoutTimer.Elapsed.TotalSeconds -lt 4) 'AGY timeout must not add LS discovery/RPC waits.'
+        Remove-Item -LiteralPath Env:FAKE_AGY_SLEEP_MS
+        $env:FAKE_AGY_CLI_USAGE_OUTPUT = "Gemini Models`tFive Hour Limit Remaining`t90%`t2026-10-03T19:17:22Z"
+        $shortJson = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Agent agy -Json
+        $short = $shortJson -join [Environment]::NewLine | ConvertFrom-Json
+        Assert-Equal 'unavailable' $short.availability 'Five-hour-only output must fail closed.'
+        Assert-Equal 300 $short.windows[0].windowDurationMins 'Short-window diagnostics must not become weekly.'
+    }
+    finally {
+        $env:AGY_CLI_PATH = $previousAgyPath
+        $env:FAKE_AGY_CLI_USAGE_OUTPUT = $usageRows
+        Remove-Item -LiteralPath Env:FAKE_AGY_ARGS_FILE, Env:FAKE_AGY_ROWS, Env:FAKE_AGY_SLEEP_MS -ErrorAction SilentlyContinue
+    }
+
     $env:FAKE_CLAUDE_STATUS_RESPONSE = '{"error":{"message":"invalid bearer token"}}'
     $claudeErrorJson = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Agent claude -Json
     $claudeError = $claudeErrorJson -join [Environment]::NewLine | ConvertFrom-Json

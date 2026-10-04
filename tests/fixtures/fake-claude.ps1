@@ -20,7 +20,11 @@ if ($env:FAKE_CLAUDE_LOGGED_IN -eq 'false') {
     [Console]::Error.Write("Authentication required: Please run 'claude auth login' to sign in.")
     exit 1
 }
-$prompt = [Console]::In.ReadToEnd()
+# Decode raw stdin bytes as UTF-8 like the real (Node) CLI does; [Console]::In would
+# follow the console code page and a stray BOM would surface as U+FEFF.
+$stdinBuffer = New-Object IO.MemoryStream
+[Console]::OpenStandardInput().CopyTo($stdinBuffer)
+$prompt = $utf8NoBom.GetString($stdinBuffer.ToArray())
 $recordedArguments = @()
 if ($p) { $recordedArguments += '-p' }
 $recordedArguments += @($Arguments)

@@ -2,10 +2,13 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
+import fs from 'node:fs';
 import {
   resolveNodePath,
   updateCodexToml,
   buildCodexTomlSection,
+  updateClaudeSettingsTimeout,
+  resolveAntigravityUserSettingsPath,
   isDelegationSection,
   isVolatileNodePath,
   findStableNodeOnPath,
@@ -93,6 +96,11 @@ describe('Codex MCP Registration & TOML Normalization', () => {
   });
 
   describe('buildCodexTomlSection', () => {
+    it('should give the delegation server a 24-hour tool timeout', () => {
+      const block = buildCodexTomlSection('node', 'server.js');
+      assert.match(block, /^tool_timeout_sec = 86400$/m);
+    });
+
     it('should format valid TOML table with escaped paths', () => {
       const block = buildCodexTomlSection(sampleNodePath, sampleServerPath);
       assert.match(block, /^\[mcp_servers\.agent_delegation\]/);
@@ -237,6 +245,41 @@ locale = "en"`;
 
       assert.ok(result.includes('command = "C:\\\\Program Files (x86)\\\\Node.js\\\\node.exe"'));
       assert.ok(result.includes('args = ["C:/離線儲存/程式設計/子代理/mcp-server/dist/index.js"]'));
+    });
+  });
+
+  describe('updateClaudeSettingsTimeout', () => {
+    it('should set MCP_TOOL_TIMEOUT in ms and preserve other settings', () => {
+      const result = updateClaudeSettingsTimeout({ theme: 'dark', env: { FOO: '1' } });
+      assert.equal(result.theme, 'dark');
+      assert.equal(result.env.FOO, '1');
+      assert.equal(result.env.MCP_TOOL_TIMEOUT, '86400000');
+    });
+  });
+
+  describe('resolveAntigravityUserSettingsPath', () => {
+    const makeAppdata = (...dirs: string[]) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-appdata-'));
+      for (const d of dirs) fs.mkdirSync(path.join(root, d, 'User'), { recursive: true });
+      return root;
+    };
+
+    it('should prefer the current Antigravity IDE folder', () => {
+      const root = makeAppdata('Antigravity IDE', 'Antigravity');
+      assert.equal(resolveAntigravityUserSettingsPath(root), path.join(root, 'Antigravity IDE', 'User', 'settings.json'));
+      fs.rmSync(root, { recursive: true, force: true });
+    });
+
+    it('should fall back to the legacy Antigravity folder', () => {
+      const root = makeAppdata('Antigravity');
+      assert.equal(resolveAntigravityUserSettingsPath(root), path.join(root, 'Antigravity', 'User', 'settings.json'));
+      fs.rmSync(root, { recursive: true, force: true });
+    });
+
+    it('should return null when neither User folder exists', () => {
+      const root = makeAppdata();
+      assert.equal(resolveAntigravityUserSettingsPath(root), null);
+      fs.rmSync(root, { recursive: true, force: true });
     });
   });
 });

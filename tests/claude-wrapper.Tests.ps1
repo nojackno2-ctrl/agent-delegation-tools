@@ -41,7 +41,6 @@ function Assert-NoBom {
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $wrapper = Join-Path $repositoryRoot 'skills\agent-delegation-tools\scripts\claude.ps1'
-$compatibilityWrapper = Join-Path $repositoryRoot 'claude.ps1'
 $fakeClaude = Join-Path $PSScriptRoot 'fixtures\fake-claude.ps1'
 $testRoot = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) ("claude-wrapper-{0}" -f [Guid]::NewGuid().ToString('N'))))
 $safeTempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
@@ -118,12 +117,6 @@ try {
     $timeout = Invoke-EncodedChild '& $env:TEST_WRAPPER -ClaudePath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -OutputFormat text -TimeoutSec 1 -Prompt $env:TEST_PROMPT'
     Assert-Equal 124 $timeout.ExitCode 'Claude wrapper must return 124 after its bounded timeout.'
     Remove-Item Env:FAKE_CLAUDE_SLEEP_MS
-
-    $env:FAKE_CLAUDE_OUTPUT = 'root forwarder'
-    $env:TEST_WRAPPER = $compatibilityWrapper
-    $forwarded = Invoke-EncodedChild '& $env:TEST_WRAPPER -ClaudePath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -OutputFormat text -TimeoutSec 10 -Prompt $env:TEST_PROMPT'
-    Assert-Equal 0 $forwarded.ExitCode ('Root Claude forwarder failed: ' + ($forwarded.Output -join [Environment]::NewLine))
-    Assert-Equal $prompt ([IO.File]::ReadAllText($promptFile, [Text.Encoding]::UTF8)) 'Root Claude forwarder changed the prompt.'
 
     $env:AGENT_DELEGATION_DEPTH = '1'
     $env:TEST_WRAPPER = $wrapper
