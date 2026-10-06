@@ -1,5 +1,9 @@
 # AI handoff
 
+## 2026-10-06 Claude: add CI
+
+- Added `.github/workflows/ci.yml` for `mcp-server` (npm ci, lint, test on Node 24). Verified in a scratch copy of HEAD (to avoid rebuilding the live MCP server's dist): lint exit 0, 96/96 tests. CI not yet observed on GitHub.
+
 ## 2026-10-05 Codex: automatic local commit policy
 
 - User authorized automatic local commits without further confirmation; AGENTS.md now records the standing policy. Push/release/history changes require separate authorization.
