@@ -46,37 +46,41 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
   let effectiveEffort = options.effort;
 
   // Normalize model and effort aliases
-  const flashMatch = effectiveModel.match(/^gemini[ -]?(3\.[5-8])[ -]?flash\s*\((high|medium|low)\)$/i);
+  const thinkingMatch = effectiveModel.match(/^(.*?)-thinking$/i);
+  if (thinkingMatch) {
+    effectiveModel = thinkingMatch[1].trim();
+    if (!effectiveEffort) effectiveEffort = 'high';
+  }
+  const argonMatch = effectiveModel.match(/^(?:gemini[ -]?)?(4)[ -]?argon(?:\s*\((high|medium|low)\)|[ -](high|medium|low))?$/i);
+  if (argonMatch) {
+    effectiveModel = `gemini-${argonMatch[1]}-argon`;
+    const effortPart = argonMatch[2] || argonMatch[3];
+    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as any;
+  }
+  const flashMatch = effectiveModel.match(/^(?:gemini[ -]?)?(3\.[5-8])[ -]?flash(?:\s*\((high|medium|low)\)|[ -](high|medium|low))?$/i);
   if (flashMatch) {
     effectiveModel = `gemini-${flashMatch[1]}-flash`;
-    if (!effectiveEffort) effectiveEffort = flashMatch[2].toLowerCase() as any;
+    const effortPart = flashMatch[2] || flashMatch[3];
+    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as any;
   }
-  const flashDashMatch = effectiveModel.match(/^gemini[ -]?(3\.[5-8])[ -]?flash-(high|medium|low)$/i);
-  if (flashDashMatch) {
-    effectiveModel = `gemini-${flashDashMatch[1]}-flash`;
-    if (!effectiveEffort) effectiveEffort = flashDashMatch[2].toLowerCase() as any;
-  }
-  const proMatch = effectiveModel.match(/^gemini[ -]?(3\.1)[ -]?pro\s*\((high|low)\)$/i);
+  const proMatch = effectiveModel.match(/^(?:gemini[ -]?)?(3\.1)[ -]?pro(?:\s*\((high|low)\)|[ -](high|low))?$/i);
   if (proMatch) {
     effectiveModel = 'gemini-3.1-pro';
-    if (!effectiveEffort) effectiveEffort = proMatch[2].toLowerCase() as any;
+    const effortPart = proMatch[2] || proMatch[3];
+    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as any;
   }
-  const claudeMatch = effectiveModel.match(/^claude[ -]?(opus|sonnet)[ -]?(?:5\.5|5-5)\s*\((high|medium|low)\)$/i);
+  const claudeMatch = effectiveModel.match(/^(?:claude[ -]?)?(opus|sonnet)[ -]?(?:5\.5|5-5)(?:\s*\((high|medium|low)\)|[ -](high|medium|low))?$/i);
   if (claudeMatch) {
     effectiveModel = `claude-${claudeMatch[1].toLowerCase()}-5-5`;
-    if (!effectiveEffort) effectiveEffort = claudeMatch[2].toLowerCase() as any;
+    const effortPart = claudeMatch[2] || claudeMatch[3];
+    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as any;
   }
-  const claudeDashMatch = effectiveModel.match(/^claude[ -]?(opus|sonnet)[ -]?(?:5\.5|5-5)-(high|medium|low)$/i);
-  if (claudeDashMatch) {
-    effectiveModel = `claude-${claudeDashMatch[1].toLowerCase()}-5-5`;
-    if (!effectiveEffort) effectiveEffort = claudeDashMatch[2].toLowerCase() as any;
-  }
-  const gptOssMatch = effectiveModel.match(/^gpt[ -]?oss[ -]?120b(?:\s*\(medium\)|-medium)?$/i);
+  const gptOssMatch = effectiveModel.match(/^gpt[ -]?oss[ -]?120b(?:\s*\(medium\)|[ -]medium)?$/i);
   if (gptOssMatch) {
     effectiveModel = 'gpt-oss-120b-medium';
   }
 
-  // AGY CLI rejects Flash models without --effort, so always carry one.
+  // AGY CLI rejects Gemini/Claude models without --effort, so always carry one.
   if (!effectiveEffort) {
     effectiveEffort = DEFAULT_MODELS.agy.effort;
   }

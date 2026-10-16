@@ -1,8 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { DEFAULT_MODELS, DEFAULT_SANDBOX, isExternalAgent, isWriteSandbox } from '../core/defaults.js';
 import { invokeAgySchema, invokeCodexSchema, invokeClaudeSchema } from '../tools/invokers.js';
 import { delegateTaskSchema, delegateParallelSchema } from '../tools/delegate.js';
+import { invokeAgy } from '../services/invokers/agy-invoker.js';
 
 describe('Delegation defaults policy', () => {
   describe('Configured models', () => {
@@ -76,10 +80,64 @@ describe('Delegation defaults policy', () => {
     });
 
     it('should still honour an explicit override', () => {
-      const parsed = invokeAgySchema.parse({ prompt: 'x', model: 'gemini-3.1-pro', effort: 'low', work_dir: process.cwd() });
-      assert.equal(parsed.model, 'gemini-3.1-pro');
+      const parsed = invokeAgySchema.parse({ prompt: 'x', model: 'gemini-4-argon', effort: 'low', work_dir: process.cwd() });
+      assert.equal(parsed.model, 'gemini-4-argon');
       assert.equal(parsed.effort, 'low');
       assert.equal(parsed.work_dir, process.cwd());
+    });
+
+    it('should normalize Gemini 4 Argon and Gemini 3.8 Flash aliases in invokeAgy', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-norm-test-'));
+      const script = path.join(tempDir, 'fake-agy.cjs');
+      fs.writeFileSync(
+        script,
+        `process.stdout.write(JSON.stringify(process.argv.slice(2))); process.exit(0);`
+      );
+      const agyCmd = path.join(tempDir, process.platform === 'win32' ? 'agy.cmd' : 'agy');
+      fs.writeFileSync(
+        agyCmd,
+        process.platform === 'win32'
+          ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`
+          : `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`,
+        { mode: 0o755 }
+      );
+
+      try {
+        const res1 = await invokeAgy({
+          prompt: 'test',
+          model: 'Gemini 4 Argon (High)',
+          workDir: tempDir,
+          agyPath: agyCmd,
+        });
+        assert.equal(res1.exitCode, 0);
+        const args1 = JSON.parse(res1.stdout) as string[];
+        assert.equal(args1[args1.indexOf('--model') + 1], 'gemini-4-argon');
+        assert.equal(args1[args1.indexOf('--effort') + 1], 'high');
+
+        const res2 = await invokeAgy({
+          prompt: 'test',
+          model: 'gemini-4-argon-low',
+          workDir: tempDir,
+          agyPath: agyCmd,
+        });
+        assert.equal(res2.exitCode, 0);
+        const args2 = JSON.parse(res2.stdout) as string[];
+        assert.equal(args2[args2.indexOf('--model') + 1], 'gemini-4-argon');
+        assert.equal(args2[args2.indexOf('--effort') + 1], 'low');
+
+        const res3 = await invokeAgy({
+          prompt: 'test',
+          model: 'gemini-4-argon',
+          workDir: tempDir,
+          agyPath: agyCmd,
+        });
+        assert.equal(res3.exitCode, 0);
+        const args3 = JSON.parse(res3.stdout) as string[];
+        assert.equal(args3[args3.indexOf('--model') + 1], 'gemini-4-argon');
+        assert.equal(args3[args3.indexOf('--effort') + 1], 'medium');
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
     });
   });
 });

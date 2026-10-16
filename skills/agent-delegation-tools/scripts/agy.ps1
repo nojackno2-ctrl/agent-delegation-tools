@@ -204,7 +204,7 @@ if ($effectiveModel) {
     if ($trimmedModel -match '^(?i)gpt[ -]?oss[ -]?120b(?:\s*\(medium\)|-medium)?$') {
         $trimmedModel = 'gpt-oss-120b-medium'
     }
-    elseif ($trimmedModel -match '^(?i)(?:gemini[ -]?)?(\d+\.\d+)[ -]?(flash|pro)$') {
+    elseif ($trimmedModel -match '^(?i)(?:gemini[ -]?)?(\d+(?:\.\d+)?)[ -]?(argon|flash|pro)$') {
         $trimmedModel = "gemini-$($Matches[1])-$($Matches[2].ToLowerInvariant())"
     }
     elseif ($trimmedModel -match '^(?i)(?:claude[ -]?)?(opus|sonnet)[ -]?(?:5\.5|5-5)$') {

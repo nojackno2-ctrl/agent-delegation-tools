@@ -1,5 +1,18 @@
 # AI handoff
 
+## 2026-10-16 Antigravity: AGY Gemini 4 Argon model support
+
+- **Request**: User uploaded the current Antigravity model menu (`Gemini 4 Argon`, `Gemini 3.8 Flash`, `Claude Opus 5.5`, `Claude Sonnet 5.5`, `GPT-OSS 120B (Medium)`) and confirmed keeping `gemini-3.8-flash` (effort `medium`) as the default AGY model while adding full support and alias normalization for `gemini-4-argon`.
+- **Changes**:
+  - Updated model normalization in `mcp-server/src/services/invokers/agy-invoker.ts` and `skills/agent-delegation-tools/scripts/agy.ps1` to normalize `gemini-4-argon` and its human-readable/hyphenated/spaced/thinking effort variants (`Gemini 4 Argon (High|Medium|Low)`, `gemini-4-argon-high|medium|low`, `gemini 4 argon high|medium|low`, `*-thinking`).
+  - Updated MCP tool schema descriptions (`mcp-server/src/tools/invokers.ts`, `mcp-server/src/tools/delegate.ts`), `skills/agent-delegation-tools/SKILL.md`, and `README.md` to reference `gemini-4-argon` (replacing legacy `gemini-3.1-pro` in architecture work recommendations).
+  - Added unit tests for `gemini-4-argon` normalization in `mcp-server/src/tests/defaults.test.ts` and `tests/agy-wrapper.Tests.ps1`.
+  - Synchronized personal skill installs (`install.ps1`) and Antigravity MCP tool schemas (`registerAntigravitySchemas`).
+- **Verification**:
+  - Live CLI check: `agy models` confirmed `gemini-4-argon-{low,medium,high}`, `gemini-3.8-flash-{low,medium,high}`, `claude-{opus,sonnet}-5-5-{low,medium,high}`, `gpt-oss-120b-medium`; `agy -p "Reply with exactly ARGON_OK" --mode plan --output-format text --print-timeout 30s --model gemini-4-argon --effort low` returned `ARGON_OK` (exit 0).
+  - MCP server: `npm.cmd run lint` exit 0; `npm.cmd test` 97/97 passed.
+  - PowerShell test suite: `tests/run-all.ps1` 9/9 suites passed; `validate.ps1` 47 passed, 0 failed, 1 skipped.
+
 ## 2026-10-14 Antigravity: automatic commit and push to GitHub policy
 
 - User authorized automatic local commits and automatic push to GitHub for all projects; AGENTS.md now records the standing policy. A Git post-commit hook has been installed in `.git/hooks/post-commit` to automatically push the current branch to `origin` upon commit. Destructive operations (force-push, release, merge, rebase, reset, branch deletion) still require separate authorization.

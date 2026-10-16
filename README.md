@@ -45,7 +45,7 @@ MCP Server 會在連線時把這份政策以 `instructions` 送給客戶端，�
 
 | 子代理後端 | MCP 工具 | 核心專長與適用情境 | 預設模型 | 額度消耗來源 |
 |---|---|---|---|---|
-| **Google Antigravity CLI** | `invoke_agy` | 超長脈絡閱讀、架構分析、Plan 規劃、低成本快速產出 | `gemini-3.8-flash` + effort `medium`（可選 `gemini-3.7-flash`、`gemini-3.1-pro` 等） | Google Antigravity |
+| **Google Antigravity CLI** | `invoke_agy` | 超長脈絡閱讀、架構分析、Plan 規劃、低成本快速產出 | `gemini-3.8-flash` + effort `medium`（可選 `gemini-4-argon`、`claude-opus-5-5`、`claude-sonnet-5-5`、`gpt-oss-120b-medium` 等） | Google Antigravity |
 | **OpenAI Codex CLI** | `invoke_codex` | 跨檔案大型實作、深度代碼重構（內建 Windows 中文路徑 Junction） | `gpt-6.1-sol` + effort `medium` | OpenAI / ChatGPT |
 | **Anthropic Claude Code** | `invoke_claude` | 深度安全審查、邏輯對齊、架構邊界掃描；支援 Session 接續 | `claude-sonnet-5-5` + effort `medium` | Anthropic Claude（**與父代理同一份額度**） |
 | **智慧動態調度器** | `delegate_task` | 自動依任務類型路由（`analysis`/`scaffolding` $\to$ AGY，`implementation`/`review` $\to$ Codex）並即時負載均衡；自動路由**不會**選 Claude | 智慧選型 | 依選用後端 |

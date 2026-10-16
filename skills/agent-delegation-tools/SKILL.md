@@ -137,7 +137,7 @@ On Windows, Codex logs containing `helper_unknown_error: setup refresh had error
     'Implement the authentication middleware in src/auth.ts and update tests.'
 ```
 
-Use `gemini-3.8-flash` (with `-Effort low|medium|high`, `gemini-3.8-flash-high`, or `gemini-3.8-flash-low`) for fast scaffolding, implementation, or deep reasoning plans. AGY also supports `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro`, `claude-opus-5-5`, `claude-sonnet-5-5`, and `gpt-oss-120b-medium`. Use `-SkipPermissions` with write modes so headless runs do not block on terminal prompts. AGY enforces `-PrintTimeout` itself; the default `0` waits until the turn completes.
+Use `gemini-3.8-flash` (with `-Effort low|medium|high`, `gemini-3.8-flash-high`, or `gemini-3.8-flash-low`) for fast scaffolding, implementation, or deep reasoning plans. AGY also supports `gemini-4-argon` (with `-Effort low|medium|high`), `claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-oss-120b-medium`, and legacy `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro`. Use `-SkipPermissions` with write modes so headless runs do not block on terminal prompts. AGY enforces `-PrintTimeout` itself; the default `0` waits until the turn completes.
 
 ### Codex CLI worker (Implementation / File Modification)
 

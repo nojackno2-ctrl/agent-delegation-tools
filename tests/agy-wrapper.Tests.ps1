@@ -168,6 +168,25 @@ try {
     Assert-Equal 'gemini-3.8-flash' $gemini38SpacedArgs[[Array]::IndexOf($gemini38SpacedArgs, '--model') + 1] 'Spaced model was not normalized.'
     Assert-Equal 'high' $gemini38SpacedArgs[[Array]::IndexOf($gemini38SpacedArgs, '--effort') + 1] 'Spaced effort was not parsed.'
 
+    # Test Gemini 4 Argon model normalization (explicit, auto effort, human-readable, hyphenated, spaced)
+    $gemini4Auto = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model gemini-4-argon -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $gemini4Auto.ExitCode ('Gemini 4 Argon auto effort test failed: ' + ($gemini4Auto.Output -join [Environment]::NewLine))
+    $gemini4AutoArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
+    Assert-Equal 'gemini-4-argon' $gemini4AutoArgs[[Array]::IndexOf($gemini4AutoArgs, '--model') + 1] 'Gemini 4 Argon model without effort failed.'
+    Assert-Equal 'medium' $gemini4AutoArgs[[Array]::IndexOf($gemini4AutoArgs, '--effort') + 1] 'Gemini 4 Argon model should auto-default effort to medium.'
+
+    $gemini4Human = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model "Gemini 4 Argon (High)" -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $gemini4Human.ExitCode ('Gemini 4 Argon human-readable model test failed: ' + ($gemini4Human.Output -join [Environment]::NewLine))
+    $gemini4HumanArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
+    Assert-Equal 'gemini-4-argon' $gemini4HumanArgs[[Array]::IndexOf($gemini4HumanArgs, '--model') + 1] 'Human-readable Gemini 4 Argon was not normalized.'
+    Assert-Equal 'high' $gemini4HumanArgs[[Array]::IndexOf($gemini4HumanArgs, '--effort') + 1] 'Parenthesized effort in Gemini 4 Argon was not parsed.'
+
+    $gemini4Hyphen = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model "gemini-4-argon-low" -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $gemini4Hyphen.ExitCode ('Gemini 4 Argon hyphen effort test failed: ' + ($gemini4Hyphen.Output -join [Environment]::NewLine))
+    $gemini4HyphenArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
+    Assert-Equal 'gemini-4-argon' $gemini4HyphenArgs[[Array]::IndexOf($gemini4HyphenArgs, '--model') + 1] 'Hyphenated Gemini 4 Argon was not normalized.'
+    Assert-Equal 'low' $gemini4HyphenArgs[[Array]::IndexOf($gemini4HyphenArgs, '--effort') + 1] 'Hyphenated effort in Gemini 4 Argon was not parsed.'
+
     # Test --sandbox flag is passed when SkipPermissions is used with workspace-write
     $env:FAKE_AGY_EXIT_CODE = '0'
     $env:FAKE_AGY_OUTPUT = 'sandbox test'

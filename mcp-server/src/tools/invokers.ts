@@ -22,7 +22,7 @@ export const invokeAgySchema = z.object({
     .string()
     .optional()
     .default(DEFAULT_MODELS.agy.model)
-    .describe(`Model name. Defaults to ${DEFAULT_MODELS.agy.model}; gemini-3.1-pro for deep architecture work.`),
+    .describe(`Model name. Defaults to ${DEFAULT_MODELS.agy.model}; gemini-4-argon for deep architecture work.`),
   effort: z
     .enum(['low', 'medium', 'high'])
     .optional()
