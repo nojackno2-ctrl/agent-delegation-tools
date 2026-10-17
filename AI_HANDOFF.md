@@ -1,5 +1,14 @@
 # AI handoff
 
+## 2026-10-17 Antigravity: Rust rewrite audit & release readiness evidence
+
+- **Task**: Audit repository for Rust migration feasibility, release readiness, branch ancestry, and CI/verification status.
+- **Repository type**: CLI / MCP Server + PowerShell skill toolkit (TypeScript/Node.js MCP server + PowerShell wrappers). Not a compiled binary/EXE project.
+- **Git & Release state**: HEAD `b4641ed` on `master`, clean working tree. Up-to-date with `origin/master`. No branch divergence. No GitHub releases published yet (`gh release list` empty). Next appropriate version is `v1.1.0` matching `mcp-server/package.json` (`1.1.0`). All commits are unreleased.
+- **Rust feasibility**: High feasibility for `mcp-server`. Could be rewritten as a single native Rust binary using `tokio`, an MCP SDK / JSON-RPC over stdio, and Windows process/job management (`windows-sys`). A native implementation would remove the Node.js runtime dependency; startup/resource improvements have not been benchmarked. Migration risks include reimplementing MCP schema reflection, Windows ACL/sandbox bridge, and maintaining parity with PowerShell wrapper interfaces.
+- **Verification**: `npm run lint` in `mcp-server` passed (tsc --noEmit exit 0); `validate.ps1` passed (47 pass, 0 fail, 1 skip). GitHub Actions CI passing.
+- **Status**: Audit complete. No Git/release mutations performed (parent owns mutations).
+
 ## 2026-10-16 Antigravity: AGY Gemini 4 Argon model support
 
 - **Request**: User uploaded the current Antigravity model menu (`Gemini 4 Argon`, `Gemini 3.8 Flash`, `Claude Opus 5.5`, `Claude Sonnet 5.5`, `GPT-OSS 120B (Medium)`) and confirmed keeping `gemini-3.8-flash` (effort `medium`) as the default AGY model while adding full support and alias normalization for `gemini-4-argon`.
