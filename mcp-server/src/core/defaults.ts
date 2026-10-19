@@ -1,5 +1,8 @@
 import { AgentName, SandboxMode } from './types.js';
 
+/** Text-only local backend; deliberately excluded from AgentName and auto-routing. */
+export const DEFAULT_LOCAL_MODEL = process.env.LOCAL_AI_MODEL?.trim() || 'laguna-xs-2.1:latest';
+
 /**
  * Project-wide delegation policy.
  *

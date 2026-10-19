@@ -11,7 +11,8 @@ import {
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import { DEFAULT_MODELS } from './core/defaults.js';
+import { DEFAULT_MODELS, DEFAULT_LOCAL_MODEL } from './core/defaults.js';
+import { invokeLocalSchema, listLocalModelsSchema, handleInvokeLocal, handleListLocalModels } from './tools/local.js';
 
 import {
   getAgentQuotasSchema,
@@ -42,11 +43,12 @@ const SERVER_VERSION: string = pkg.version || '1.1.0';
 const DELEGATION_POLICY = `Delegation-first policy for this workspace.
 
 The parent agent is a dispatcher. Real work belongs to the three subscription
-CLIs behind these tools, and the two external ones carry the load:
+CLIs and a text-only local backend behind these tools:
 
   - agy    -> Google Antigravity, ${DEFAULT_MODELS.agy.model}, effort ${DEFAULT_MODELS.agy.effort} (default)
   - codex  -> OpenAI Codex CLI, ${DEFAULT_MODELS.codex.model}, effort ${DEFAULT_MODELS.codex.effort} (default)
   - claude -> Claude CLI, ${DEFAULT_MODELS.claude.model}, effort ${DEFAULT_MODELS.claude.effort} (default)
+  - local  -> Ollama ${DEFAULT_LOCAL_MODEL} on this machine, zero cloud quota (invoke_local only)
 
 Rules:
 1. Delegate instead of doing it yourself. Multi-file implementation, refactors,
@@ -74,7 +76,12 @@ Rules:
    invoke_* defaults to async=false for synchronous work; pass async=true for
    longer tasks. get_job_status lists jobs, and cancel_job aborts running tasks.
    Finished jobs are kept for one hour, up to 50; running jobs last until completion.
-   同步呼叫可用 async=false；長任務先派工，再輪詢 get_job_result，避免主機逾時。`;
+   同步呼叫可用 async=false；長任務先派工，再輪詢 get_job_result，避免主機逾時。
+9. Local backend: Ollama ${DEFAULT_LOCAL_MODEL} on this machine uses zero cloud quota.
+   Use invoke_local for bounded self-contained text tasks: summaries, review of
+   pasted code, drafting, classification. It cannot read files or run tools, so
+   pass all context explicitly. Make one call at a time; output is unverified.
+   Local is never auto-selected by delegate_task; omit model to prefer its default.`;
 
 // Helper to convert Zod schema to clean JSON Schema for MCP tools
 function toToolSchema(zodSchema: any) {
@@ -105,6 +112,18 @@ async function main() {
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
       tools: [
+        {
+          name: 'invoke_local',
+          description: `Run a bounded text task with local Ollama (${DEFAULT_LOCAL_MODEL}); zero cloud quota. Pass all context explicitly: no file/tool access. One call at a time; output is unverified. Defaults synchronous; async=true returns a job_id.`,
+          inputSchema: toToolSchema(invokeLocalSchema),
+          annotations: { readOnlyHint: true, destructiveHint: false },
+        },
+        {
+          name: 'list_local_models',
+          description: 'List allowed installed and loaded Ollama models, default model, address and reachability. No cloud calls.',
+          inputSchema: toToolSchema(listLocalModelsSchema),
+          annotations: { readOnlyHint: true, destructiveHint: false },
+        },
         {
           name: 'get_job_status',
           description: 'Get brief job status; omit job_id to list retained jobs.',
@@ -177,6 +196,11 @@ async function main() {
     const context = { signal: extra.signal, onProgress: reporter.onProgress };
     try {
       switch (name) {
+        case 'invoke_local': return await handleInvokeLocal(invokeLocalSchema.parse(args), context);
+        case 'list_local_models': {
+          listLocalModelsSchema.parse(args);
+          return await handleListLocalModels();
+        }
         case 'get_job_status': return handleGetJobStatus(getJobStatusSchema.parse(args));
         case 'get_job_result': return await handleGetJobResult(getJobResultSchema.parse(args));
         case 'cancel_job': return await handleCancelJob(cancelJobSchema.parse(args));

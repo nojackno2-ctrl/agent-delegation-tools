@@ -1,5 +1,13 @@
 # AI handoff
 
+## 2026-10-19 Claude (dispatch) + Codex (implementation): local Ollama backend in MCP
+
+- **Task**: Let cloud agents connected to agent-delegation call the local AI (Ollama, `laguna-xs-2.1:latest`, see `D:\本地AI\local_ai_mcp.py`).
+- **Changes**: new `mcp-server/src/services/invokers/local-invoker.ts` (Ollama HTTP client via global fetch, process-wide serial queue, abort + timeout, think budget 8192, zh-TW system prompt ported verbatim), `mcp-server/src/tools/local.ts` (`invoke_local` sync/async via dispatchJob, `list_local_models`), `DEFAULT_LOCAL_MODEL` in `core/defaults.ts`, tool registration + policy rule 9 in `index.ts`, `tests/local.test.ts`, README section, CLAUDE.md table/rule 9.
+- **Design**: `local` is NOT an `AgentName` and is never auto-routed by `delegate_task`/`delegate_parallel` (text-only, no file/tool access). Env: `OLLAMA_HOST`, `LOCAL_AI_MODEL`, `LOCAL_AI_MODELS`.
+- **Verified**: `npm test` 109/109 pass, `npm run lint` pass; real stdio smoke test against running Ollama: `list_local_models` reachable with model loaded, `invoke_local` (think=false) returned a correct zh-TW answer in 0.84s.
+- **Not verified**: think=true real inference, async job path against real Ollama (covered only by mocked tests), already-running MCP host processes need restart to see new tools. The separate `local_ai` MCP server is unchanged and still registered.
+
 ## 2026-10-17 Antigravity: Rust rewrite audit & release readiness evidence
 
 - **Task**: Audit repository for Rust migration feasibility, release readiness, branch ancestry, and CI/verification status.

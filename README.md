@@ -13,6 +13,22 @@
 
 ---
 
+## 本機 AI（Ollama）
+
+`invoke_local` 讓連接此 MCP 的雲端代理呼叫本機 Ollama，預設模型為 `laguna-xs-2.1:latest`，不消耗雲端額度。適合摘要、貼上程式碼的審查、草稿與分類；模型無法讀取檔案或執行工具，請透過 `task` 與 `context` 提供完整資料，並自行驗證結果。它不會被 `delegate_task` 自動選用。
+
+先用 `list_local_models` 查看允許且已安裝的模型、已載入模型與連線狀態。`invoke_local` 預設同步執行；較長任務可設 `async:true`，再透過 `get_job_result` 輪詢或 `cancel_job` 取消。一次只呼叫一個本機任務，伺服器也會依序執行以保護 GPU 資源。`think` 預設為 `true`，簡單任務可設為 `false`；`timeout_sec` 預設 300 秒（含排隊），0 表示不限時。
+
+在 MCP Server 程序的環境變數設定：
+
+- `OLLAMA_HOST`：預設 `http://127.0.0.1:11434`，接受 `host:port` 或完整 HTTP/HTTPS URL。
+- `LOCAL_AI_MODEL`：覆寫預設模型。
+- `LOCAL_AI_MODELS`：額外允許的模型，以逗號分隔；預設模型永遠在允許清單內。模型須事先安裝於 Ollama。
+
+需要 Node.js 18+ 的內建 `fetch`；更新後請重新啟動或連接 MCP Server。
+
+---
+
 ## 為什麼採用 MCP 模式？
 
 相比傳統複製提示詞檔案的 Skill 模式，**MCP Server 具備顯著優勢**：
