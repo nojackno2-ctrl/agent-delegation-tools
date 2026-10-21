@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { resolveAgyExecutable } from '../../core/executables.js';
 import { spawnProcess } from '../../core/process.js';
 import { ExecutionResult, EXIT_CODES } from '../../core/types.js';
+import { isQuotaExhausted } from '../../core/quota-signals.js';
 import { DEFAULT_MODELS } from '../../core/defaults.js';
 
 export interface InvokeAgyOptions {
@@ -136,6 +137,16 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
   }
 
   if (result.cancelled || result.timedOut) return { ...result, output: combinedOutput.trim() };
+
+  // Quota/credit exhaustion (e.g. RESOURCE_EXHAUSTED 429) lets the dispatcher fail over.
+  if (result.exitCode !== 0 && isQuotaExhausted(combinedOutput)) {
+    return {
+      ...result,
+      exitCode: EXIT_CODES.QUOTA_EXCEEDED,
+      output: combinedOutput.trim(),
+      stderr: `Antigravity quota exhausted (Exit 10):\n${combinedOutput}`,
+    };
+  }
 
   // Login failure detection
   if (/login|sign in|auth required|not authenticated/i.test(combinedOutput) && result.exitCode !== 0) {

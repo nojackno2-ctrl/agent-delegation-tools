@@ -5,6 +5,7 @@ import { resolveCodexExecutable } from '../../core/executables.js';
 import { spawnProcess } from '../../core/process.js';
 import { ensureAsciiDirectory } from '../../core/junction.js';
 import { ExecutionResult, EXIT_CODES } from '../../core/types.js';
+import { isQuotaExhausted } from '../../core/quota-signals.js';
 import { DEFAULT_MODELS, DEFAULT_SANDBOX } from '../../core/defaults.js';
 
 export interface InvokeCodexOptions {
@@ -134,6 +135,16 @@ export async function invokeCodex(options: InvokeCodexOptions): Promise<Executio
     }
 
     if (result.cancelled || result.timedOut) return { ...result, output: output.trim() };
+
+    // Usage-limit exits must map to Exit 10 so the dispatcher marks Codex depleted and fails over.
+    if (result.exitCode !== 0 && isQuotaExhausted(result.stdout + '\n' + result.stderr)) {
+      return {
+        ...result,
+        exitCode: EXIT_CODES.QUOTA_EXCEEDED,
+        output: output.trim(),
+        stderr: `Codex usage limit reached (Exit 10):\n${result.stderr || output}`,
+      };
+    }
 
     // Login check
     if (/login|sign in|auth required|not authenticated/i.test(result.stderr + output) && result.exitCode !== 0) {

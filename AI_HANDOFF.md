@@ -1,5 +1,13 @@
 # AI handoff
 
+## 2026-10-21 Claude: Codex/AGY quota exhaustion now fails over
+
+- **Bug**: a Codex run that hit `ERROR: You’ve hit your usage limit` (exit 1) and an AGY run with `Your AI credits balance is too low` / `RESOURCE_EXHAUSTED (code 429)` (exit 3) were returned as plain failures, so the dispatcher never marked them depleted or failed over. The TS invokers for Codex and AGY had no quota detection at all (only Claude did); the PowerShell wrappers had a pattern, but it missed the typographic apostrophe in `You’ve` and `credits balance`, and `no credits?` falsely matched text like "no credit card".
+- **Fix**: new `mcp-server/src/core/quota-signals.ts` (`isQuotaExhausted`, mirroring the wrapper pattern plus those fixes). `codex-invoker.ts` and `agy-invoker.ts` map non-zero exits that match it to Exit 10 (before the login check). Zero exits are never reclassified, so runs that merely quote these messages (e.g. from this file) stay successful. The same regex fix was applied to codex.ps1, agy.ps1, claude.ps1 and delegate.ps1 using ASCII-only `’` (Windows PowerShell 5.1 reads BOM-less scripts as ANSI).
+- **Verified**: `npm run lint` pass; `npm test` 116/116 (new `quota-signals.test.ts`: real message strings, false-positive cases, fake codex exit 1 → Exit 10 → failover to fake agy with attempts `[codex:10, agy:0]` and codex marked depleted, zero exit quoting the message stays success). Windows PowerShell 5.1 parsed all four wrappers and their regex classified the same cases correctly; `tests/run-all.ps1` 9/9.
+- **Not verified**: a live failover against the real depleted providers (both still exhausted at time of writing).
+- **Open, not changed**: `~/.codex/config.toml` (modified 2026-10-21 07:58) sets `model = "laguna-xs-2.1:latest"` and `openai_base_url = "http://127.0.0.1:11434/api/codex/v1"` (Ollama), so delegated Codex runs first try a websocket to Ollama (426 Upgrade Required). That is user-global config, left for the user to decide.
+
 ## 2026-10-21 Claude: local Ollama backend can read/modify files (agent loop)
 
 - **Task**: user asked to give the local AI the same file-editing ability as the cloud CLIs. Codex (usage limit) and AGY (credits exhausted) were both unavailable, so the user told Claude to implement it directly.

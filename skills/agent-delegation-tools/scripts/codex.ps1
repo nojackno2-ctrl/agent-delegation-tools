@@ -384,7 +384,7 @@ if ($isAuthFailure) {
     }
 }
 elseif (-not $timedOut -and ($exitCode -ne 0) -and
-    ($stdout + "`n" + $stderr -match '(?i)(insufficient[_ -]?quota|quota\s+(?:has\s+been\s+)?(?:exceeded|exhausted|depleted|used\s+up)|usage\s+(?:limit|cap)\s+(?:has\s+been\s+)?(?:reached|exceeded|exhausted)|(?:daily|weekly|monthly)\s+(?:usage\s+)?limit\s+(?:reached|exceeded|exhausted)|you(?:''ve| have)\s+(?:hit|reached|exceeded)\s+(?:your\s+)?(?:usage\s+)?limit|rate[_ -]?limit(?:ed|\s+(?:reached|exceeded))?|too\s+many\s+requests|resource[_ -]?exhausted|(?:out\s+of|no|insufficient)\s+credits?|credits?\s+(?:are\s+)?(?:exhausted|depleted)|credit\s+balance\s+(?:is\s+)?(?:too\s+low|empty)|(?:http\s*)?429\b)')) {
+    ($stdout + "`n" + $stderr -match '(?i)(insufficient[_ -]?quota|quota\s+(?:has\s+been\s+)?(?:exceeded|exhausted|depleted|used\s+up)|usage\s+(?:limit|cap)\s+(?:has\s+been\s+)?(?:reached|exceeded|exhausted)|(?:daily|weekly|monthly)\s+(?:usage\s+)?limit\s+(?:reached|exceeded|exhausted)|you(?:(?:''|\u2019)ve| have)\s+(?:hit|reached|exceeded)\s+(?:your\s+)?(?:usage\s+)?limit|rate[_ -]?limit(?:ed|\s+(?:reached|exceeded))?|too\s+many\s+requests|resource[_ -]?exhausted|(?:out\s+of|insufficient)\s+credits?|no\s+credits?\s+(?:left|remaining)|credits?\s+(?:are\s+)?(?:exhausted|depleted)|credits?\s+balance\s+(?:is\s+)?(?:too\s+low|empty)|(?:http\s*)?429\b)')) {
     $exitCode = $EXIT_QUOTA_EXCEEDED
 }
 
