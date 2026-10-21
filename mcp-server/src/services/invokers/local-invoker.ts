@@ -1,9 +1,18 @@
 import { DEFAULT_LOCAL_MODEL } from '../../core/defaults.js';
+import { LocalSandbox, LocalWorkspace, localToolSchemas } from './local-tools.js';
 
 const THINK_MODELS = new Set(['laguna-xs-2.1:latest']);
 const SYSTEM_PROMPT = 'You are a local task delegate. Complete the supplied task concisely. '
   + 'You have no tools, filesystem or internet access. Never claim to have '
   + "run tests or changed files. Mark uncertainties. Match the task's language. "
+  + 'Whenever you write Chinese, use Traditional Chinese as used in Taiwan '
+  + '(zh-TW), never Simplified Chinese, and do not add pinyin.';
+const AGENT_PROMPT = (sandbox: LocalSandbox) => 'You are a local coding agent working in a workspace directory. '
+  + `You have file tools confined to that workspace (${sandbox === 'workspace-write' ? 'read, search, write, edit and delete files' : 'read-only: list, read and search files'}); `
+  + 'paths are relative to the workspace root. You cannot run commands or access the internet. '
+  + 'Inspect files with the tools before editing them, keep changes minimal and within the task, '
+  + 'and finish with a short summary of what you changed. Never claim to have run tests. Mark uncertainties. '
+  + "Match the task's language. "
   + 'Whenever you write Chinese, use Traditional Chinese as used in Taiwan '
   + '(zh-TW), never Simplified Chinese, and do not add pinyin.';
 
@@ -21,6 +30,10 @@ export interface InvokeLocalOptions extends LocalClientOptions {
   think?: boolean;
   signal?: AbortSignal;
   timeoutSec?: number;
+  /** Enables the file-tool agent loop confined to this absolute directory. */
+  workDir?: string;
+  sandbox?: LocalSandbox;
+  maxSteps?: number;
 }
 
 function settings(options: LocalClientOptions) {
@@ -32,9 +45,10 @@ function settings(options: LocalClientOptions) {
   };
 }
 
+interface OllamaToolCall { function?: { name?: string; arguments?: unknown } }
 interface OllamaResponse {
   models?: { name: string }[];
-  message?: { content?: string };
+  message?: { content?: string; tool_calls?: OllamaToolCall[] };
   done_reason?: string;
   prompt_eval_count?: number;
   eval_count?: number;
@@ -95,27 +109,59 @@ export async function invokeLocal(options: InvokeLocalOptions) {
     const tags = await request(options, '/api/tags', signal);
     if (!(tags.models ?? []).some((m: { name: string }) => m.name === model)) throw new Error('Requested local model is not installed.');
     const thinking = (options.think ?? true) && THINK_MODELS.has(model);
+    const workspace = options.workDir ? await LocalWorkspace.open(options.workDir, options.sandbox ?? 'workspace-write') : undefined;
+    const maxSteps = options.maxSteps ?? 30;
     const started = performance.now();
-    const response = await request(options, '/api/chat', signal, {
-      model, stream: false, keep_alive: '15m',
-      ...(THINK_MODELS.has(model) ? { think: thinking } : {}),
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: `Task:\n${options.task}\n\nContext supplied by caller:\n${options.context ?? ''}` },
-      ],
-      options: { temperature: 0.2, num_predict: (options.maxTokens ?? 1024) + (thinking ? 8192 : 0), num_ctx: 65536 },
-    });
+    const messages: Record<string, unknown>[] = [
+      { role: 'system', content: workspace ? AGENT_PROMPT(workspace.sandbox) : SYSTEM_PROMPT },
+      { role: 'user', content: `Task:
+${options.task}
+
+Context supplied by caller:
+${options.context ?? ''}` },
+    ];
+    let response: OllamaResponse = {};
+    let promptTokens = 0, generatedTokens = 0, steps = 0, toolCalls = 0;
+    let doneReason: string | null = null;
+    for (;;) {
+      signal.throwIfAborted();
+      response = await request(options, '/api/chat', signal, {
+        model, stream: false, keep_alive: '15m',
+        ...(THINK_MODELS.has(model) ? { think: thinking } : {}),
+        messages,
+        ...(workspace ? { tools: localToolSchemas(workspace.sandbox) } : {}),
+        options: { temperature: 0.2, num_predict: (options.maxTokens ?? 1024) + (thinking ? 8192 : 0), num_ctx: 65536 },
+      });
+      steps++;
+      promptTokens += response.prompt_eval_count ?? 0;
+      generatedTokens += response.eval_count ?? 0;
+      doneReason = response.done_reason ?? null;
+      const calls = workspace ? response.message?.tool_calls ?? [] : [];
+      if (!calls.length) break;
+      messages.push({ role: 'assistant', content: response.message?.content ?? '', tool_calls: calls });
+      for (const call of calls) {
+        signal.throwIfAborted();
+        const name = call.function?.name ?? '';
+        toolCalls++;
+        messages.push({ role: 'tool', tool_name: name, content: await workspace!.run(name, call.function?.arguments) });
+      }
+      if (steps >= maxSteps) { doneReason = 'max_steps'; break; }
+    }
     const answer: string = response.message?.content ?? '';
-    if (!answer) {
+    if (!answer && !(workspace && (doneReason === 'max_steps' || workspace.changed.size))) {
       if (thinking && response.done_reason === 'length') throw new Error('Reasoning used the whole token budget; retry with think=false or a smaller task.');
       throw new Error('Ollama returned no answer.');
     }
     const chars = Array.from(answer);
     return {
       model, answer: chars.slice(0, options.maxOutputChars ?? 6000).join(''), truncated: chars.length > (options.maxOutputChars ?? 6000),
-      done_reason: response.done_reason ?? null, thinking,
-      prompt_tokens: response.prompt_eval_count ?? 0, generated_tokens: response.eval_count ?? 0,
+      done_reason: doneReason, thinking,
+      prompt_tokens: promptTokens, generated_tokens: generatedTokens,
       elapsed_seconds: Math.round((performance.now() - started) / 10) / 100,
+      ...(workspace ? {
+        work_dir: workspace.root, sandbox: workspace.sandbox, steps, tool_calls: toolCalls,
+        files_changed: [...workspace.changed].sort(),
+      } : {}),
       inference: 'local_ollama' as const, verified: false as const,
     };
   });

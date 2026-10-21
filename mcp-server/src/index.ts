@@ -43,7 +43,7 @@ const SERVER_VERSION: string = pkg.version || '1.1.0';
 const DELEGATION_POLICY = `Delegation-first policy for this workspace.
 
 The parent agent is a dispatcher. Real work belongs to the three subscription
-CLIs and a text-only local backend behind these tools:
+CLIs and a local backend behind these tools:
 
   - agy    -> Google Antigravity, ${DEFAULT_MODELS.agy.model}, effort ${DEFAULT_MODELS.agy.effort} (default)
   - codex  -> OpenAI Codex CLI, ${DEFAULT_MODELS.codex.model}, effort ${DEFAULT_MODELS.codex.effort} (default)
@@ -78,9 +78,12 @@ Rules:
    Finished jobs are kept for one hour, up to 50; running jobs last until completion.
    同步呼叫可用 async=false；長任務先派工，再輪詢 get_job_result，避免主機逾時。
 9. Local backend: Ollama ${DEFAULT_LOCAL_MODEL} on this machine uses zero cloud quota.
-   Use invoke_local for bounded self-contained text tasks: summaries, review of
-   pasted code, drafting, classification. It cannot read files or run tools, so
-   pass all context explicitly. Make one call at a time; output is unverified.
+   Use invoke_local for bounded tasks: summaries, review, drafting, classification,
+   and small file edits. Without work_dir it is text-only, so pass all context
+   explicitly. With work_dir it runs a tool loop that can list/read/search files
+   and, with sandbox=workspace-write (default), write/edit/delete them. Paths are
+   confined to work_dir by the server and there is no shell tool, so it cannot run
+   tests. Review its diff (files_changed). Make one call at a time; output is unverified.
    Local is never auto-selected by delegate_task; omit model to prefer its default.`;
 
 // Helper to convert Zod schema to clean JSON Schema for MCP tools
@@ -114,9 +117,9 @@ async function main() {
       tools: [
         {
           name: 'invoke_local',
-          description: `Run a bounded text task with local Ollama (${DEFAULT_LOCAL_MODEL}); zero cloud quota. Pass all context explicitly: no file/tool access. One call at a time; output is unverified. Defaults synchronous; async=true returns a job_id.`,
+          description: `Run a bounded task with local Ollama (${DEFAULT_LOCAL_MODEL}); zero cloud quota. Without work_dir: text-only, pass all context explicitly. With work_dir: the model gets file tools (list/read/search; plus write/edit/delete under workspace-write) confined to work_dir, no shell; result lists files_changed, review the diff. One call at a time; output is unverified. Defaults synchronous; async=true returns a job_id.`,
           inputSchema: toToolSchema(invokeLocalSchema),
-          annotations: { readOnlyHint: true, destructiveHint: false },
+          annotations: { readOnlyHint: false, destructiveHint: true },
         },
         {
           name: 'list_local_models',

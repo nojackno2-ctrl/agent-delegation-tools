@@ -9,6 +9,10 @@ import { jobRegistry } from '../services/jobs/job-registry.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { fileURLToPath } from 'node:url';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { LocalWorkspace } from '../services/invokers/local-tools.js';
 
 const reply = { message: { content: '本機回答😀' }, done_reason: 'stop', prompt_eval_count: 12, eval_count: 8 };
 function fakeFetch(chat: unknown = reply, models = [DEFAULT_LOCAL_MODEL]): typeof fetch {
@@ -183,11 +187,12 @@ test('queued cancellation/timeout returns promptly without starting another requ
 test('schemas enforce limits and keep local out of automatic routing', () => {
   assert.deepEqual(invokeLocalSchema.parse({ task: 'x' }), {
     task: 'x', async: false, context: '', model: DEFAULT_LOCAL_MODEL, max_tokens: 1024,
-    max_output_chars: 6000, think: true, timeout_sec: 300,
+    max_output_chars: 6000, think: true, sandbox: 'workspace-write', max_steps: 30,
   });
   for (const override of [{ task: '' }, { task: '  ' }, { task: 'x'.repeat(8001) }, { context: 'x'.repeat(64001) },
     { max_tokens: 31 }, { max_tokens: 4097 }, { max_tokens: 32.5 }, { max_output_chars: 127 }, { max_output_chars: 16001 },
-    { timeout_sec: -1 }, { timeout_sec: 3601 }]) {
+    { timeout_sec: -1 }, { timeout_sec: 3601 }, { work_dir: 'relative/dir' }, { sandbox: 'danger-full-access' },
+    { max_steps: 0 }, { max_steps: 101 }]) {
     assert.equal(invokeLocalSchema.safeParse({ task: 'x', ...override }).success, false);
   }
   assert.equal((EXTERNAL_AGENTS as string[]).includes('local'), false);
@@ -272,4 +277,128 @@ test('stdio local tools honor environment overrides, return async results, and c
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }
+});
+
+/** Scripted Ollama: each /api/chat call returns the next message and records the payload. */
+function scripted(turns: unknown[], payloads: any[] = []): typeof fetch {
+  return async (url, init) => {
+    init?.signal?.throwIfAborted();
+    if (!String(url).endsWith('/api/chat')) return Response.json({ models: [{ name: DEFAULT_LOCAL_MODEL }] });
+    payloads.push(JSON.parse(init!.body as string));
+    const message = turns[Math.min(payloads.length - 1, turns.length - 1)];
+    return Response.json({ message, done_reason: 'stop', prompt_eval_count: 1, eval_count: 2 });
+  };
+}
+const call = (name: string, args: unknown) => ({ function: { name, arguments: args } });
+
+async function tempWorkspace() {
+  const dir = await mkdtemp(path.join(tmpdir(), 'local-agent-'));
+  await writeFile(path.join(dir, 'a.txt'), 'hello world\n');
+  return dir;
+}
+
+test('agent loop reads then edits a file and reports files_changed', async () => {
+  const dir = await tempWorkspace();
+  const payloads: any[] = [];
+  try {
+    const result = await invokeLocal({ task: 'Change world to 世界', workDir: dir, fetch: scripted([
+      { content: '', tool_calls: [call('read_file', { path: 'a.txt' })] },
+      { content: '', tool_calls: [call('edit_file', JSON.stringify({ path: 'a.txt', old_string: 'world', new_string: '世界' })), call('write_file', { path: 'sub/new.md', content: 'x' })] },
+      { content: '已修改 a.txt' },
+    ], payloads) });
+    assert.equal(await readFile(path.join(dir, 'a.txt'), 'utf8'), 'hello 世界\n');
+    assert.equal(await readFile(path.join(dir, 'sub', 'new.md'), 'utf8'), 'x');
+    assert.equal(result.answer, '已修改 a.txt');
+    assert.equal(result.steps, 3);
+    assert.equal(result.tool_calls, 3);
+    assert.deepEqual(result.files_changed, ['a.txt', 'sub/new.md']);
+    assert.equal(result.sandbox, 'workspace-write');
+    assert.equal(result.prompt_tokens, 3);
+    assert.equal(result.verified, false);
+    assert.deepEqual(payloads[0].tools.map((t: any) => t.function.name), ['list_dir', 'read_file', 'search', 'write_file', 'edit_file', 'delete_file']);
+    assert.match(payloads[0].messages[0].content, /local coding agent/);
+    assert.deepEqual(payloads[1].messages.slice(2), [
+      { role: 'assistant', content: '', tool_calls: [call('read_file', { path: 'a.txt' })] },
+      { role: 'tool', tool_name: 'read_file', content: '1\thello world\n2\t\n' },
+    ]);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('read-only sandbox hides and refuses write tools', async () => {
+  const dir = await tempWorkspace();
+  const payloads: any[] = [];
+  try {
+    const result = await invokeLocal({ task: 'x', workDir: dir, sandbox: 'read-only', fetch: scripted([
+      { content: '', tool_calls: [call('write_file', { path: 'a.txt', content: 'pwned' }), call('delete_file', { path: 'a.txt' })] },
+      { content: 'done' },
+    ], payloads) });
+    assert.deepEqual(payloads[0].tools.map((t: any) => t.function.name), ['list_dir', 'read_file', 'search']);
+    assert.match(payloads[1].messages[3].content, /not available in the read-only sandbox/);
+    assert.equal(await readFile(path.join(dir, 'a.txt'), 'utf8'), 'hello world\n');
+    assert.deepEqual(result.files_changed, []);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('workspace tools confine paths, block .git writes and report errors as tool output', async () => {
+  const dir = await tempWorkspace();
+  const outside = await mkdtemp(path.join(tmpdir(), 'local-outside-'));
+  try {
+    const ws = await LocalWorkspace.open(dir, 'workspace-write');
+    for (const target of ['../escape.txt', path.join(outside, 'x.txt'), 'sub/../../escape.txt'])
+      assert.match(await ws.run('write_file', { path: target, content: 'x' }), /^ERROR: Path is outside the workspace/);
+    assert.match(await ws.run('read_file', { path: '..' }), /^ERROR: Path is outside/);
+    assert.match(await ws.run('write_file', { path: '.git/config', content: 'x' }), /\.git is not allowed/);
+    assert.match(await ws.run('edit_file', { path: 'a.txt', old_string: 'missing', new_string: 'y' }), /not found/);
+    await writeFile(path.join(dir, 'b.txt'), 'aa');
+    assert.match(await ws.run('edit_file', { path: 'b.txt', old_string: 'a', new_string: 'b' }), /matches 2 times/);
+    assert.match(await ws.run('edit_file', { path: 'b.txt', old_string: 'a', new_string: '$&b', replace_all: true }), /Edited b.txt/);
+    assert.equal(await readFile(path.join(dir, 'b.txt'), 'utf8'), '$&b$&b');
+    assert.match(await ws.run('delete_file', { path: '.' }), /^ERROR/);
+    assert.match(await ws.run('nope', {}), /Unknown tool/);
+    assert.match(await ws.run('search', { pattern: 'hello', glob: '*.txt' }), /^a\.txt:1: hello world/);
+    assert.match(await ws.run('list_dir', { path: '.' }), /a\.txt/);
+    await mkdir(path.join(outside, 'target'));
+    let linked = true;
+    try { await symlink(path.join(outside, 'target'), path.join(dir, 'link'), 'junction'); } catch { linked = false; }
+    if (linked) assert.match(await ws.run('write_file', { path: 'link/x.txt', content: 'x' }), /outside the workspace through a link/);
+    assert.deepEqual([...ws.changed], ['b.txt']);
+    await assert.rejects(LocalWorkspace.open(path.join(dir, 'missing'), 'read-only'), /does not exist/);
+    await assert.rejects(LocalWorkspace.open('relative', 'read-only'), /absolute/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('agent loop stops at max_steps and honors abort mid-loop', async () => {
+  const dir = await tempWorkspace();
+  try {
+    const looping = scripted([{ content: '', tool_calls: [call('list_dir', { path: '.' })] }]);
+    const result = await invokeLocal({ task: 'x', workDir: dir, maxSteps: 2, fetch: looping });
+    assert.equal(result.done_reason, 'max_steps');
+    assert.equal(result.steps, 2);
+    const controller = new AbortController();
+    let chats = 0;
+    const aborting: typeof fetch = async (url, init) => {
+      if (String(url).endsWith('/api/chat') && ++chats === 2) controller.abort();
+      return looping(url, init);
+    };
+    await assert.rejects(invokeLocal({ task: 'x', workDir: dir, signal: controller.signal, fetch: aborting }), { name: 'AbortError' });
+    assert.equal(chats, 2);
+    assert.equal((await invokeLocal({ task: 'next', fetch: fakeFetch() })).verified, false);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('handler passes work_dir through and reports bad work_dir as an error', async t => {
+  const dir = await tempWorkspace();
+  try {
+    t.mock.method(globalThis, 'fetch', scripted([{ content: '', tool_calls: [call('delete_file', { path: 'a.txt' })] }, { content: 'ok' }]));
+    const response = await handleInvokeLocal({ task: 'x', work_dir: dir });
+    const result = JSON.parse(response.content[0].text);
+    assert.deepEqual(result.files_changed, ['a.txt']);
+    assert.equal(result.sandbox, 'workspace-write');
+    const missing = await handleInvokeLocal({ task: 'x', work_dir: path.join(dir, 'nope') });
+    assert.equal(missing.isError, true);
+    assert.match(missing.content[0].text, /does not exist/);
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });

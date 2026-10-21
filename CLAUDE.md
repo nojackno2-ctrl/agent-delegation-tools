@@ -24,7 +24,7 @@
 7. **長任務先派工再輪詢。** `delegate_task` / `delegate_parallel` 預設 `async=true`，立即回傳 `job_id`；用 `get_job_result(job_id, wait_sec=25)` 輪詢，每次最多 50 秒，直到工作完成。`invoke_agy` / `invoke_codex` / `invoke_claude` 預設同步，長任務明確設 `async=true`。Desktop MCP 主機有自己的請求逾時且忽略 `MCP_TOOL_TIMEOUT`，不能用子代理不限時取代輪詢。
 8. **追蹤與取消工作。** `get_job_status` 省略 `job_id` 列出保留的工作；`cancel_job(job_id)` 終止子行程樹（退出碼 `130`）。完成工作保留 1 小時、最多 50 筆；檢查結果中的 `attempts` 容錯切換歷史，截斷輸出保留尾端並附完整 log 路徑。收到 ID 不代表成功，仍須驗證結果與 diff。
 
-9. **本機 AI 用 `invoke_local`。** 不耗雲端額度，適合摘要、審查貼上的程式碼、草稿、分類等有界文字任務；它無法讀檔或執行工具，`task`/`context` 須帶齊資料，一次只呼叫一個，結果未經驗證。`list_local_models` 查看可用模型；`delegate_task` 永遠不會自動選它。
+9. **本機 AI 用 `invoke_local`。** 不耗雲端額度，適合摘要、審查、草稿、分類與小型檔案修改。未帶 `work_dir` 時是純文字模式，`task`/`context` 須帶齊資料；帶 `work_dir` 時可在該目錄內列出／讀取／搜尋檔案，`sandbox=workspace-write`（預設）時還能寫入、編輯、刪除檔案。路徑由伺服器限制在 `work_dir` 內，沒有 shell，無法跑測試；父代理須審查 `files_changed` 與 diff。一次只呼叫一個，結果未經驗證。`list_local_models` 查看可用模型；`delegate_task` 永遠不會自動選它。
 
 ## 例外
 

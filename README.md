@@ -15,9 +15,12 @@
 
 ## 本機 AI（Ollama）
 
-`invoke_local` 讓連接此 MCP 的雲端代理呼叫本機 Ollama，預設模型為 `laguna-xs-2.1:latest`，不消耗雲端額度。適合摘要、貼上程式碼的審查、草稿與分類；模型無法讀取檔案或執行工具，請透過 `task` 與 `context` 提供完整資料，並自行驗證結果。它不會被 `delegate_task` 自動選用。
+`invoke_local` 讓連接此 MCP 的雲端代理呼叫本機 Ollama，預設模型為 `laguna-xs-2.1:latest`，不消耗雲端額度。適合摘要、審查、草稿、分類與小型檔案修改，並自行驗證結果。它不會被 `delegate_task` 自動選用。
 
-先用 `list_local_models` 查看允許且已安裝的模型、已載入模型與連線狀態。`invoke_local` 預設同步執行；較長任務可設 `async:true`，再透過 `get_job_result` 輪詢或 `cancel_job` 取消。一次只呼叫一個本機任務，伺服器也會依序執行以保護 GPU 資源。`think` 預設為 `true`，簡單任務可設為 `false`；`timeout_sec` 預設 300 秒（含排隊），0 表示不限時。
+- **純文字模式**（未帶 `work_dir`）：模型無法讀取檔案，請透過 `task` 與 `context` 提供完整資料。
+- **檔案代理模式**（帶 `work_dir` 絕對路徑）：伺服器以 Ollama 工具呼叫迴圈提供 `list_dir`、`read_file`、`search`；`sandbox` 預設 `workspace-write`，另提供 `write_file`、`edit_file`、`delete_file`，`read-only` 則只開放讀取工具。所有路徑由 Node 限制在 `work_dir` 內（含符號連結／junction 逃逸檢查），禁止寫入 `.git`，且**沒有 shell 工具**，無法執行測試或指令。`max_steps` 預設 30，`timeout_sec` 在此模式預設 1800 秒。結果附 `files_changed`、`steps`、`tool_calls`，父代理須審查 diff。
+
+先用 `list_local_models` 查看允許且已安裝的模型、已載入模型與連線狀態。`invoke_local` 預設同步執行；較長任務可設 `async:true`，再透過 `get_job_result` 輪詢或 `cancel_job` 取消。一次只呼叫一個本機任務，伺服器也會依序執行以保護 GPU 資源。`think` 預設為 `true`，簡單任務可設為 `false`；`timeout_sec` 預設 300 秒（含排隊；檔案代理模式 1800 秒），0 表示不限時。
 
 在 MCP Server 程序的環境變數設定：
 

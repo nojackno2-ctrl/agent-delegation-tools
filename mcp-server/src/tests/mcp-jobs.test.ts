@@ -57,10 +57,12 @@ test('stdio advertises job schemas and dispatches async invoker/default delegate
   try {
     const tools = (await server.client.listTools()).tools;
     for (const name of ['get_job_status', 'get_job_result', 'cancel_job']) assert.ok(tools.some(tool => tool.name === name));
-    for (const name of ['get_job_status', 'get_job_result', 'get_agent_quotas', 'invoke_local', 'list_local_models']) {
+    for (const name of ['get_job_status', 'get_job_result', 'get_agent_quotas', 'list_local_models']) {
       const tool = tools.find(t => t.name === name);
       assert.equal((tool as any)?.annotations?.readOnlyHint, true);
     }
+    // invoke_local can edit files when work_dir is supplied.
+    assert.equal((tools.find(t => t.name === 'invoke_local') as any)?.annotations?.readOnlyHint, false);
     for (const name of ['delegate_task', 'delegate_parallel', 'invoke_codex', 'invoke_agy', 'invoke_claude', 'invoke_local']) {
       const schema = tools.find(tool => tool.name === name)!.inputSchema.properties!.async as { default: boolean };
       assert.equal(schema.default, name.startsWith('delegate_'));

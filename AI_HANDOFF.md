@@ -1,5 +1,12 @@
 # AI handoff
 
+## 2026-10-21 Claude: local Ollama backend can read/modify files (agent loop)
+
+- **Task**: user asked to give the local AI the same file-editing ability as the cloud CLIs. Codex (usage limit) and AGY (credits exhausted) were both unavailable, so the user told Claude to implement it directly.
+- **Changes**: new `mcp-server/src/services/invokers/local-tools.ts` (`LocalWorkspace`: `list_dir`, `read_file`, `search`, plus `write_file`/`edit_file`/`delete_file` under workspace-write; lexical + realpath confinement to work_dir, `.git` writes rejected, tool errors returned to the model as text; no shell tool). `local-invoker.ts` runs an Ollama `/api/chat` `tools` loop when `workDir` is set (separate agent system prompt, summed token counts, `max_steps` stop with done_reason `max_steps`, abort checked between turns/tool calls, still inside the global GPU queue). `invoke_local` schema gains `work_dir`, `sandbox` (read-only|workspace-write, default workspace-write), `max_steps` (default 30); `timeout_sec` default is now 300 text / 1800 with work_dir. Tool annotation changed to readOnlyHint=false, destructiveHint=true. Without work_dir the request payload is unchanged. Docs: index.ts policy rule 9 + tool description, README, CLAUDE.md rule 9.
+- **Verified**: `npm run lint` pass; `npm test` 114/114 pass (new tests: read→edit loop, read-only hides/refuses write tools, `..`/absolute/junction escape rejection, `.git` block, max_steps, mid-loop abort, handler work_dir errors). Real Ollama smoke test (`laguna-xs-2.1:latest`, temp dir) with think=false and think=true: model edited `greet.js` and created `NOTES.md` correctly in 4 steps / 3 tool calls, `files_changed` accurate.
+- **Not verified**: long multi-file tasks with the local model; behaviour of other allowed local models that may not support tools; running MCP hosts need a reconnect to see the new schema. Side note: Codex failure output showed `ws://127.0.0.1:11434/api/codex/v1/responses` 426 errors and the usage-limit text was not treated as quota depletion (no failover) — not investigated.
+
 ## 2026-10-19 Claude (dispatch) + Codex (implementation): local Ollama backend in MCP
 
 - **Task**: Let cloud agents connected to agent-delegation call the local AI (Ollama, `laguna-xs-2.1:latest`, see `D:\本地AI\local_ai_mcp.py`).
@@ -52,7 +59,7 @@
 ## Current state
 
 - Native TypeScript/Node MCP server and PowerShell wrappers delegate to AGY, Codex, and Claude with quota-aware routing. Defaults: gemini-3.8-flash / gpt-6.1-sol / claude-sonnet-5-5, all effort medium.
-- Nine tools: get_agent_quotas, delegate_task, delegate_parallel, invoke_agy, invoke_codex, invoke_claude, get_job_status, get_job_result, cancel_job. delegate_* defaults async=true; poll get_job_result with job_id (wait_sec default 25, max 50). invoke_* defaults synchronous.
+- invoke_local supports a file-tool agent mode via work_dir (2026-10-21). Nine tools: get_agent_quotas, delegate_task, delegate_parallel, invoke_agy, invoke_codex, invoke_claude, get_job_status, get_job_result, cancel_job. delegate_* defaults async=true; poll get_job_result with job_id (wait_sec default 25, max 50). invoke_* defaults synchronous.
 - Build/test from mcp-server: npm install; npm run build; npm run lint; npm test. From repo root: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/run-all.ps1 (all PowerShell suites, including default model/exit-code parity). PowerShell wrappers live only in skills/agent-delegation-tools/scripts.
 - Known open issues: reconnect hosts after rebuilding; desktop request timeouts require dispatch/poll; AGY startup/auth latency can exceed quota-read deadlines; Codex sandbox ACL setup can fail for orphaned repo ownership; read-only nested MCP calls can require approval. Only Codex workspace-write provides OS sandbox confinement; AGY/Claude write modes skip prompts.
 - Historical entries are preserved verbatim below. Older history: [docs/handoff-archive.md](docs/handoff-archive.md).
