@@ -1,5 +1,13 @@
 # AI handoff
 
+## 2026-10-21 Claude: Codex back on OpenAI, local model via `-p ollama`
+
+- **Request**: user wants Codex to use OpenAI by default but still be able to use the local AI.
+- **User config (outside repo)**: `~/.codex/config.toml` had been switched (07:58) to `model = "laguna-xs-2.1:latest"`, `model_reasoning_effort = "high"`, `model_catalog_json`, `openai_base_url = http://127.0.0.1:11434/api/codex/v1`. With the user's request, those were moved into a Codex v2 profile `~/.codex/ollama.config.toml` and the base config restored to `gpt-6.1-sol` / `medium`. Backup: `~/.codex/config.toml.before-openai-restore-20261021`. LF endings preserved.
+- **Repo changes**: `core/defaults.ts` `allowedLocalModels()` (shared with local-invoker) and `codexLocalProfile(model)`; `codex-invoker.ts` adds `exec -p <profile>` when the model is an allowed local model (`CODEX_LOCAL_PROFILE`, default `ollama`); `delegate-service.ts` treats Codex as healthy in quota balancing when `codexModel` is local; same `-p` logic in `codex.ps1`. Tool descriptions, README, CLAUDE.md rule 9 updated.
+- **Verified**: Desktop Codex 0.163: default run reports `model: gpt-6.1-sol, provider: openai` (currently usage-limited until 10:00, no more 426); `codex exec -p ollama` answered `LOCAL_OK`. New dist `invokeCodex(model=laguna-xs-2.1:latest)` edited a temp file, exit 0, ~63s. `npm run lint` pass, `npm test` 118/118 (new `codex-local.test.ts`), `tests/run-all.ps1` 9/9; codex.ps1 with a fake argv CLI adds `-p ollama` only for the local model.
+- **Caveats**: under the profile Codex first tries a websocket to Ollama (426) and then falls back to HTTP — harmless noise. In the smoke test the local model edited via PowerShell and the file came out UTF-16; local-model Codex output needs review. Live delegate_task routing with a local codex_model was not run end to end.
+
 ## 2026-10-21 Claude: Codex/AGY quota exhaustion now fails over
 
 - **Bug**: a Codex run that hit `ERROR: You’ve hit your usage limit` (exit 1) and an AGY run with `Your AI credits balance is too low` / `RESOURCE_EXHAUSTED (code 429)` (exit 3) were returned as plain failures, so the dispatcher never marked them depleted or failed over. The TS invokers for Codex and AGY had no quota detection at all (only Claude did); the PowerShell wrappers had a pattern, but it missed the typographic apostrophe in `You’ve` and `credits balance`, and `no credits?` falsely matched text like "no credit card".

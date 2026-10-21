@@ -299,6 +299,14 @@ else {
 $codexArgs += @('--cd', $effectiveDir, '--color', 'never')
 foreach ($directory in $effectiveAddDirs) { $codexArgs += @('--add-dir', $directory) }
 if ($Model)        { $codexArgs += @('--model', $Model) }
+# Local Ollama models run through the Codex profile that points at Ollama
+# ($CODEX_HOME\<profile>.config.toml), matching the MCP server's codex invoker.
+$localModels = @($(if ($env:LOCAL_AI_MODEL -and $env:LOCAL_AI_MODEL.Trim()) { $env:LOCAL_AI_MODEL.Trim() } else { 'laguna-xs-2.1:latest' })) +
+    @("$env:LOCAL_AI_MODELS" -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+if ($Model -and ($localModels -contains $Model)) {
+    $codexLocalProfile = if ($env:CODEX_LOCAL_PROFILE -and $env:CODEX_LOCAL_PROFILE.Trim()) { $env:CODEX_LOCAL_PROFILE.Trim() } else { 'ollama' }
+    $codexArgs += @('-p', $codexLocalProfile)
+}
 if ($Effort)       { $codexArgs += @('-c', "model_reasoning_effort=`"$Effort`"") }
 if ($resolvedOutFile) { $codexArgs += @('--output-last-message', $resolvedOutFile) }
 if ($Json)         { $codexArgs += '--json' }

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { delegateTask } from '../services/dispatcher/delegate-service.js';
 import { delegateParallel } from '../services/dispatcher/parallel-service.js';
 import { TaskType, SandboxMode, TargetAgent, FallbackAgent, DelegationAttempt } from '../core/types.js';
-import { DEFAULT_MODELS, DEFAULT_SANDBOX } from '../core/defaults.js';
+import { DEFAULT_LOCAL_MODEL, DEFAULT_MODELS, DEFAULT_SANDBOX } from '../core/defaults.js';
 import { capOutputTail } from '../core/logging.js';
 import { validateWorkDir } from '../utils/validation.js';
 
@@ -78,7 +78,7 @@ export const delegateTaskSchema = z.object({
   codex_model: z
     .string()
     .optional()
-    .describe(`Model override for the Codex CLI subagent. Default ${DEFAULT_MODELS.codex.model}.`),
+    .describe(`Model override for the Codex CLI subagent. Default ${DEFAULT_MODELS.codex.model}. A local Ollama model (${DEFAULT_LOCAL_MODEL} or LOCAL_AI_MODELS) runs Codex via the "-p ollama" profile with zero OpenAI quota.`),
   codex_effort: z
     .string()
     .optional()
@@ -237,7 +237,7 @@ export const delegateParallelSchema = z.object({
   codex_model: z
     .string()
     .optional()
-    .describe(`Model override for the Codex CLI subagent. Default ${DEFAULT_MODELS.codex.model}.`),
+    .describe(`Model override for the Codex CLI subagent. Default ${DEFAULT_MODELS.codex.model}. A local Ollama model (${DEFAULT_LOCAL_MODEL} or LOCAL_AI_MODELS) runs Codex via the "-p ollama" profile with zero OpenAI quota.`),
   codex_effort: z
     .string()
     .optional()

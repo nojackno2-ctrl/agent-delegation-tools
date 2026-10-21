@@ -6,7 +6,7 @@ import { spawnProcess } from '../../core/process.js';
 import { ensureAsciiDirectory } from '../../core/junction.js';
 import { ExecutionResult, EXIT_CODES } from '../../core/types.js';
 import { isQuotaExhausted } from '../../core/quota-signals.js';
-import { DEFAULT_MODELS, DEFAULT_SANDBOX } from '../../core/defaults.js';
+import { codexLocalProfile, DEFAULT_MODELS, DEFAULT_SANDBOX } from '../../core/defaults.js';
 
 export interface InvokeCodexOptions {
   prompt: string;
@@ -64,8 +64,11 @@ export async function invokeCodex(options: InvokeCodexOptions): Promise<Executio
     path.join(os.tmpdir(), `mcp-codex-out-${Date.now()}-${Math.random().toString(36).substring(2, 8)}.txt`);
 
   const useAutomaticApproval = options.approveForMe !== false && sandbox === 'workspace-write';
+  const localProfile = codexLocalProfile(effectiveModel);
   const args: string[] = [
     'exec',
+    // Local Ollama models run through the user's Codex profile (base URL + model catalog).
+    ...(localProfile ? ['-p', localProfile] : []),
     '--cd',
     dirResolution.effectivePath,
     '--color',

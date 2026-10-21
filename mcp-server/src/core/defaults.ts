@@ -3,6 +3,20 @@ import { AgentName, SandboxMode } from './types.js';
 /** Text-only local backend; deliberately excluded from AgentName and auto-routing. */
 export const DEFAULT_LOCAL_MODEL = process.env.LOCAL_AI_MODEL?.trim() || 'laguna-xs-2.1:latest';
 
+/** Local Ollama models callers may use: the default plus comma-separated LOCAL_AI_MODELS. */
+export function allowedLocalModels(): Set<string> {
+  return new Set([DEFAULT_LOCAL_MODEL, ...(process.env.LOCAL_AI_MODELS ?? '').split(',').map(m => m.trim()).filter(Boolean)]);
+}
+
+/**
+ * Codex profile (`$CODEX_HOME/<name>.config.toml`) that points Codex at local
+ * Ollama. A Codex run whose model is a local model is launched with `-p <profile>`
+ * and does not spend OpenAI quota.
+ */
+export function codexLocalProfile(model: string | undefined): string | undefined {
+  return model && allowedLocalModels().has(model) ? (process.env.CODEX_LOCAL_PROFILE?.trim() || 'ollama') : undefined;
+}
+
 /**
  * Project-wide delegation policy.
  *

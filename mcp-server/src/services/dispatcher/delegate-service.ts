@@ -3,7 +3,7 @@ import { getDynamicQuotaHealth, markProviderDepleted, markProviderUnavailable } 
 import { invokeAgy } from '../invokers/agy-invoker.js';
 import { invokeCodex } from '../invokers/codex-invoker.js';
 import { invokeClaude } from '../invokers/claude-invoker.js';
-import { DEFAULT_SANDBOX, isExternalAgent, isWriteSandbox } from '../../core/defaults.js';
+import { codexLocalProfile, DEFAULT_SANDBOX, isExternalAgent, isWriteSandbox } from '../../core/defaults.js';
 import { writeRunLog, generateRunId, truncateTail } from '../../core/logging.js';
 
 export interface DelegateOptions {
@@ -74,6 +74,8 @@ export async function delegateTask(options: DelegateOptions): Promise<ExecutionR
   if (balanceQuota && options.fallbackAgent !== 'none' && !options.signal?.aborted) {
     try {
       const healthMap = await getDynamicQuotaHealth({ workDir: options.workDir, timeoutSec: 15 });
+      // Codex on a local Ollama model does not spend OpenAI quota.
+      if (codexLocalProfile(options.codexModel)) healthMap.codex = { ...healthMap.codex, available: true, minRemainingPercent: 100 };
 
       const rank = (a: AgentName, b: AgentName) => {
         const externalDelta = Number(isExternalAgent(b)) - Number(isExternalAgent(a));

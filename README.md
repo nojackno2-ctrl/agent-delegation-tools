@@ -208,6 +208,7 @@ args = ["<REPO_ROOT>/mcp-server/dist/index.js"]
 ### 5. `invoke_codex`（直接呼叫 OpenAI Codex CLI）
 - **參數**：`prompt`, `sandbox` (`"read-only"` | `"workspace-write"` | `"danger-full-access"`), `model`, `effort`, `work_dir`（必填、絕對且既存目錄）, `timeout_sec`, `async`（預設 `false`）
 - 寫入模式使用 `--approve-for-me` 自動審核；目前 Codex CLI 由此旗標隱含 `workspace-write`，wrapper 不會再同傳互斥的 `--sandbox workspace-write`。唯讀模式仍顯式傳 `--sandbox read-only`。
+- **Codex 使用本機模型**：`model`／`codex_model` 指定本機 Ollama 模型（`laguna-xs-2.1:latest` 或 `LOCAL_AI_MODELS` 中的模型）時，會自動加上 `-p ollama`，套用 `~/.codex/ollama.config.toml`（`openai_base_url` 指向 `http://127.0.0.1:11434/api/codex/v1` 與 Ollama 模型目錄），讓完整的 Codex 代理（含 shell 與檔案修改）跑在本機模型上，不耗 OpenAI 額度；額度路由也不會因 OpenAI 額度耗盡而跳過它。設定檔名可用 `CODEX_LOCAL_PROFILE` 覆寫。基本 `config.toml` 應保持預設 OpenAI。
 - 主機側 resolver 優先選擇同時包含 `codex.exe` 與匹配 `codex-code-mode-host.exe` 的 Desktop bundle；缺少 companion 的 `~\.codex\.sandbox-bin` 只作 fallback，避免工具呼叫 fail closed 後模型仍誤報完成。
 
 ### 6. `invoke_claude`（直接呼叫 Anthropic Claude Code CLI）

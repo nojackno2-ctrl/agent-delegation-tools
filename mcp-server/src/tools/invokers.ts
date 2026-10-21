@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { invokeAgy } from '../services/invokers/agy-invoker.js';
 import { invokeCodex } from '../services/invokers/codex-invoker.js';
 import { invokeClaude } from '../services/invokers/claude-invoker.js';
-import { DEFAULT_MODELS, DEFAULT_SANDBOX } from '../core/defaults.js';
+import { DEFAULT_LOCAL_MODEL, DEFAULT_MODELS, DEFAULT_SANDBOX } from '../core/defaults.js';
 import { capOutputTail, generateRunId, writeRunLog } from '../core/logging.js';
 import { validateWorkDir } from '../utils/validation.js';
 
@@ -94,7 +94,7 @@ export const invokeCodexSchema = z.object({
     .string()
     .optional()
     .default(DEFAULT_MODELS.codex.model)
-    .describe(`Model for Codex CLI. Defaults to ${DEFAULT_MODELS.codex.model}.`),
+    .describe(`Model for Codex CLI. Defaults to ${DEFAULT_MODELS.codex.model}. A local Ollama model (${DEFAULT_LOCAL_MODEL} or LOCAL_AI_MODELS) runs Codex via the "-p ollama" profile with zero OpenAI quota.`),
   effort: z
     .string()
     .optional()

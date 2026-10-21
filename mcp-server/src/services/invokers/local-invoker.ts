@@ -1,4 +1,4 @@
-import { DEFAULT_LOCAL_MODEL } from '../../core/defaults.js';
+import { allowedLocalModels, DEFAULT_LOCAL_MODEL } from '../../core/defaults.js';
 import { LocalSandbox, LocalWorkspace, localToolSchemas } from './local-tools.js';
 
 const THINK_MODELS = new Set(['laguna-xs-2.1:latest']);
@@ -41,7 +41,7 @@ function settings(options: LocalClientOptions) {
   return {
     baseUrl: (/^https?:\/\//i.test(host) ? host : `http://${host}`).replace(/\/+$/, ''),
     fetch: options.fetch ?? globalThis.fetch,
-    allowed: new Set([DEFAULT_LOCAL_MODEL, ...(process.env.LOCAL_AI_MODELS ?? '').split(',').map(m => m.trim()).filter(Boolean)]),
+    allowed: allowedLocalModels(),
   };
 }
 
