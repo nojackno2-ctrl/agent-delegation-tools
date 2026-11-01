@@ -41,13 +41,13 @@ export async function handleInvokeAgy(rawInput: InvokeAgyInput, context: ToolCon
   }
 
   const input = invokeAgySchema.parse(rawInput);
-  if (input.async) return dispatchJob('invoke_agy', jobContext => handleInvokeAgy({ ...input, async: false }, jobContext));
+  if (input.async) return dispatchJob('invoke_agy', jobContext => handleInvokeAgy({ ...rawInput, async: false }, jobContext));
   try {
     const result = await invokeAgy({
       prompt: input.prompt,
       mode: input.mode,
       model: input.model,
-      effort: input.effort,
+      effort: rawInput.effort,
       workDir: input.work_dir,
       signal: context.signal,
       onProgress: context.onProgress,

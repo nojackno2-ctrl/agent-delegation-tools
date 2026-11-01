@@ -17,7 +17,7 @@ param(
     [string]$Model,
 
     [ValidateSet('low', 'medium', 'high', 'xhigh', 'max')]
-    [string]$Effort,
+    [string]$Effort = 'low',
 
     [string[]]$AllowedTools,
 

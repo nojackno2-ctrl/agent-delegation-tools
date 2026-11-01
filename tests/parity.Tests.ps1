@@ -85,6 +85,6 @@ Assert-True ($delegateContent -match ("claude\s*=\s*'{0}'" -f [regex]::Escape($e
 
 # agy.ps1 effort default when model is passed without effort
 $agyContent = [IO.File]::ReadAllText((Join-Path $canonicalDir 'agy.ps1'), [Text.Encoding]::UTF8)
-Assert-True ($agyContent -match '\$effectiveEffort\s*=\s*''medium''') "agy.ps1 effort fallback must be 'medium'."
+Assert-True ($agyContent -match '\$effectiveEffort\s*=\s*''low''') "agy.ps1 effort fallback must be 'low'."
 
 'parity.Tests.ps1: all tests passed.'

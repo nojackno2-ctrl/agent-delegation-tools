@@ -355,11 +355,11 @@ describe('MCP Server Hardening Specification', () => {
 
   it('Item 8 & 9: Model/effort text generated from DEFAULT_MODELS and softened policy wording', async () => {
     assert.equal(DEFAULT_MODELS.agy.model, 'gemini-3.8-flash');
-    assert.equal(DEFAULT_MODELS.agy.effort, 'medium');
-    assert.equal(DEFAULT_MODELS.codex.model, 'gpt-6.1-sol');
-    assert.equal(DEFAULT_MODELS.codex.effort, 'medium');
+    assert.equal(DEFAULT_MODELS.agy.effort, 'low');
+    assert.equal(DEFAULT_MODELS.codex.model, 'gpt-6.1-terra');
+    assert.equal(DEFAULT_MODELS.codex.effort, 'low');
     assert.equal(DEFAULT_MODELS.claude.model, 'claude-sonnet-5-5');
-    assert.equal(DEFAULT_MODELS.claude.effort, 'medium');
+    assert.equal(DEFAULT_MODELS.claude.effort, 'low');
 
     // Descriptions in delegateTaskSchema interpolate DEFAULT_MODELS
     assert.match(delegateTaskSchema.shape.task_type.description || '', new RegExp(DEFAULT_MODELS.agy.model));

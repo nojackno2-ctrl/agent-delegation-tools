@@ -30,9 +30,9 @@ Unless the user names a different model, delegate with these and do not override
 
 | Backend | Model | Effort |
 |---|---|---|
-| Antigravity (AGY) | `gemini-3.8-flash` | `medium` |
-| Codex CLI | `gpt-6.1-sol` | `medium` |
-| Claude CLI | `claude-sonnet-5-5` | `medium` |
+| Antigravity (AGY) | `gemini-3.8-flash` | `low` |
+| Codex CLI | `gpt-6.1-terra` | `low` |
+| Claude CLI | `claude-sonnet-5-5` | `low` |
 
 The `agent-delegation` MCP server applies these same defaults automatically, so `delegate_task` / `invoke_*` calls need no model arguments. Prefer the MCP tools when they are connected; the PowerShell wrappers below are the fallback path.
 
@@ -132,7 +132,7 @@ On Windows, Codex logs containing `helper_unknown_error: setup refresh had error
 ```powershell
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'agy.ps1') `
     -WorkDir 'C:\path\to\project' -Mode workspace-write -SkipPermissions `
-    -Model 'gemini-3.8-flash' -Effort medium `
+    -Model 'gemini-3.8-flash' -Effort low `
     -OutFile "$env:TEMP\agy-worker.txt" `
     'Implement the authentication middleware in src/auth.ts and update tests.'
 ```
@@ -143,7 +143,7 @@ Use `gemini-3.8-flash` (with `-Effort low|medium|high`, `gemini-3.8-flash-high`,
 
 ```powershell
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'codex.ps1') `
-    -WorkDir 'C:\path\to\project' -Sandbox workspace-write -Model 'gpt-6.1-sol' -Effort medium `
+    -WorkDir 'C:\path\to\project' -Sandbox workspace-write -Model 'gpt-6.1-terra' -Effort low `
     -ApproveForMe -Ephemeral -OutFile "$env:TEMP\codex-worker.txt" `
     'Refactor the database repository in src/db.ts to use connection pooling.'
 ```
@@ -155,7 +155,7 @@ Use `-AddDir` for extra workspaces. The wrapper gives non-ASCII paths collision-
 ```powershell
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'claude.ps1') `
     -WorkDir 'C:\path\to\project' -Mode workspace-write -Context isolated `
-    -Model 'claude-sonnet-5-5' -Effort medium -OutFile "$env:TEMP\claude-worker.txt" `
+    -Model 'claude-sonnet-5-5' -Effort low -OutFile "$env:TEMP\claude-worker.txt" `
     'Add input sanitization to src/routes.ts and verify error handling.'
 ```
 
@@ -167,8 +167,8 @@ The wrapper sends the prompt through UTF-8 stdin, disables prompt suggestions, a
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'delegate.ps1') `
     -TaskType implementation -Sandbox workspace-write -BalanceQuota `
     -WorkDir 'C:\path\to\project' `
-    -AgyModel 'gemini-3.8-flash' -AgyEffort medium -CodexModel 'gpt-6.1-sol' -CodexEffort medium `
-    -ClaudeModel 'claude-sonnet-5-5' -ClaudeEffort medium -OutFile "$env:TEMP\worker.txt" `
+    -AgyModel 'gemini-3.8-flash' -AgyEffort low -CodexModel 'gpt-6.1-terra' -CodexEffort low `
+    -ClaudeModel 'claude-sonnet-5-5' -ClaudeEffort low -OutFile "$env:TEMP\worker.txt" `
     'Implement the requested feature in src/service.ts and verify tests pass.'
 ```
 

@@ -211,13 +211,13 @@ function Resolve-OutputPath {
 # Fallback child settings when the parent supplies none. Explicit parameters win.
 $script:DefaultBackendModel = @{
     agy    = 'gemini-3.8-flash'
-    codex  = 'gpt-6.1-sol'
+    codex  = 'gpt-6.1-terra'
     claude = 'claude-sonnet-5-5'
 }
 $script:DefaultBackendEffort = @{
-    agy    = 'medium'
-    codex  = 'medium'
-    claude = 'medium'
+    agy    = 'low'
+    codex  = 'low'
+    claude = 'low'
 }
 
 function Get-BackendModel {

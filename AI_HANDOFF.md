@@ -1,5 +1,12 @@
 # AI handoff
 
+## 2026-11-01 Codex：更新子代理模型與預設思考程度
+
+- Codex 預設改為 `gpt-6.1-terra`；Codex、AGY、Claude 預設 effort 為 `low`，保留明確覆寫；AGY `gpt-oss-120b-medium` 為固定 medium 例外。
+- `agy models` 列出 13 個模型與程度組合；Codex 本機模型目錄包含 Terra。各後端接受模型字串，實際可用性取決於帳號與 CLI。
+- 子代理驗證：`npm run lint`、`npm test`（118/118）通過；`tests/run-all.ps1` 首輪 9/9 通過，最後 AGY 調整後相關 wrapper 測試通過。未逐一實際呼叫所有模型。
+- `install.ps1` 已同步四份個人技能副本並通過 SHA-256；MCP 已建置，既有程序需重新連線或重啟才會載入新的工具描述與預設值。
+
 ## 2026-10-21 Claude: Codex back on OpenAI, local model via `-p ollama`
 
 - **Request**: user wants Codex to use OpenAI by default but still be able to use the local AI.

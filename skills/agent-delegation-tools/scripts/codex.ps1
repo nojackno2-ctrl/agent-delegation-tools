@@ -17,11 +17,11 @@ param(
     [ValidateSet('read-only', 'workspace-write', 'danger-full-access')]
     [string]$Sandbox = 'workspace-write',
 
-    [string]$Model,
+    [string]$Model = 'gpt-6.1-terra',
 
     # Codex exposes reasoning effort as a config override rather than a dedicated flag.
     [ValidateSet('low', 'medium', 'high', 'xhigh', 'ultra', 'max')]
-    [string]$Effort,
+    [string]$Effort = 'low',
 
     [string]$WorkDir,
 

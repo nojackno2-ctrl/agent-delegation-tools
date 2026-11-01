@@ -82,7 +82,9 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
   }
 
   // AGY CLI rejects Gemini/Claude models without --effort, so always carry one.
-  if (!effectiveEffort) {
+  if (effectiveModel === 'gpt-oss-120b-medium') {
+    effectiveEffort = undefined;
+  } else if (!effectiveEffort) {
     effectiveEffort = DEFAULT_MODELS.agy.effort;
   }
 

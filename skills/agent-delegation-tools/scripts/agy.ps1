@@ -10,7 +10,7 @@ param(
     [ValidateSet('plan', 'accept-edits', 'read-only', 'workspace-write')]
     [string]$Mode = 'plan',
 
-    [string]$Model,
+    [string]$Model = 'gemini-3.8-flash',
 
     [ValidateSet('low', 'medium', 'high')]
     [string]$Effort,
@@ -213,9 +213,12 @@ if ($effectiveModel) {
 
     $effectiveModel = $trimmedModel
 
-    # 3. Default effort to medium when model is specified without effort
-    if (-not $effectiveEffort -and $effectiveModel -ne 'gpt-oss-120b-medium') {
-        $effectiveEffort = 'medium'
+    # 3. Default effort to low when model is specified without effort
+    if ($effectiveModel -eq 'gpt-oss-120b-medium') {
+        $effectiveEffort = $null
+    }
+    elseif (-not $effectiveEffort) {
+        $effectiveEffort = 'low'
     }
 }
 

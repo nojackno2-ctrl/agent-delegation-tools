@@ -10,19 +10,19 @@ import { invokeAgy } from '../services/invokers/agy-invoker.js';
 
 describe('Delegation defaults policy', () => {
   describe('Configured models', () => {
-    it('should default AGY to Gemini 3.8 Flash at medium effort', () => {
+    it('should default AGY to Gemini 3.8 Flash at low effort', () => {
       assert.equal(DEFAULT_MODELS.agy.model, 'gemini-3.8-flash');
-      assert.equal(DEFAULT_MODELS.agy.effort, 'medium');
+      assert.equal(DEFAULT_MODELS.agy.effort, 'low');
     });
 
-    it('should default Codex to GPT-6.1 Sol at medium effort', () => {
-      assert.equal(DEFAULT_MODELS.codex.model, 'gpt-6.1-sol');
-      assert.equal(DEFAULT_MODELS.codex.effort, 'medium');
+    it('should default Codex to GPT-6.1 Terra at low effort', () => {
+      assert.equal(DEFAULT_MODELS.codex.model, 'gpt-6.1-terra');
+      assert.equal(DEFAULT_MODELS.codex.effort, 'low');
     });
 
-    it('should default Claude to Sonnet 5.5 at medium effort', () => {
+    it('should default Claude to Sonnet 5.5 at low effort', () => {
       assert.equal(DEFAULT_MODELS.claude.model, 'claude-sonnet-5-5');
-      assert.equal(DEFAULT_MODELS.claude.effort, 'medium');
+      assert.equal(DEFAULT_MODELS.claude.effort, 'low');
     });
   });
 
@@ -134,7 +134,13 @@ describe('Delegation defaults policy', () => {
         assert.equal(res3.exitCode, 0);
         const args3 = JSON.parse(res3.stdout) as string[];
         assert.equal(args3[args3.indexOf('--model') + 1], 'gemini-4-argon');
-        assert.equal(args3[args3.indexOf('--effort') + 1], 'medium');
+        assert.equal(args3[args3.indexOf('--effort') + 1], 'low');
+
+        const fixed = await invokeAgy({ prompt: 'test', model: 'gpt-oss-120b-medium', effort: 'high', workDir: tempDir, agyPath: agyCmd });
+        assert.equal(fixed.exitCode, 0);
+        const fixedArgs = JSON.parse(fixed.stdout) as string[];
+        assert.equal(fixedArgs[fixedArgs.indexOf('--model') + 1], 'gpt-oss-120b-medium');
+        assert.equal(fixedArgs.includes('--effort'), false);
       } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
       }

@@ -6,9 +6,9 @@
 
 | 後端 | CLI | 預設模型 | 預設 effort |
 |------|-----|----------|-------------|
-| `agy` | Google Antigravity | `gemini-3.8-flash` | `medium` |
-| `codex` | OpenAI Codex | `gpt-6.1-sol` | `medium` |
-| `claude` | Anthropic Claude CLI | `claude-sonnet-5-5` | `medium` |
+| `agy` | Google Antigravity | `gemini-3.8-flash` | `low` |
+| `codex` | OpenAI Codex | `gpt-6.1-terra` | `low` |
+| `claude` | Anthropic Claude CLI | `claude-sonnet-5-5` | `low` |
 | `local` | 本機 Ollama（HTTP，非 CLI） | `laguna-xs-2.1:latest` | `think=true` |
 
 除非使用者指定，一律使用上表的預設值，不要在呼叫時另外指定模型。

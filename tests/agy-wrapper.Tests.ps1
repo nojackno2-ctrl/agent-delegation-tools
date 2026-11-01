@@ -117,12 +117,12 @@ try {
     Assert-Equal 'gemini-3.7-flash' $gemini37HighArgs[[Array]::IndexOf($gemini37HighArgs, '--model') + 1] 'Gemini 3.7 Flash model was not forwarded.'
     Assert-Equal 'high' $gemini37HighArgs[[Array]::IndexOf($gemini37HighArgs, '--effort') + 1] 'Gemini 3.7 Flash effort high was not forwarded.'
 
-    # Test Gemini 3.7 Flash without effort (should default to medium)
+    # Test Gemini 3.7 Flash without effort (should default to low)
     $gemini37Auto = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model gemini-3.7-flash -Prompt $env:TEST_PROMPT'
     Assert-Equal 0 $gemini37Auto.ExitCode ('Gemini 3.7 Flash auto effort test failed: ' + ($gemini37Auto.Output -join [Environment]::NewLine))
     $gemini37AutoArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
     Assert-Equal 'gemini-3.7-flash' $gemini37AutoArgs[[Array]::IndexOf($gemini37AutoArgs, '--model') + 1] 'Gemini 3.7 Flash model without effort failed.'
-    Assert-Equal 'medium' $gemini37AutoArgs[[Array]::IndexOf($gemini37AutoArgs, '--effort') + 1] 'Gemini 3.7 Flash model should auto-default effort to medium.'
+    Assert-Equal 'low' $gemini37AutoArgs[[Array]::IndexOf($gemini37AutoArgs, '--effort') + 1] 'Gemini 3.7 Flash model should auto-default effort to low.'
 
     # Test Gemini 3.8 Flash with explicit effort
     $env:FAKE_AGY_EXIT_CODE = '0'
@@ -133,12 +133,12 @@ try {
     Assert-Equal 'gemini-3.8-flash' $gemini38HighArgs[[Array]::IndexOf($gemini38HighArgs, '--model') + 1] 'Gemini 3.8 Flash model was not forwarded.'
     Assert-Equal 'high' $gemini38HighArgs[[Array]::IndexOf($gemini38HighArgs, '--effort') + 1] 'Gemini 3.8 Flash effort high was not forwarded.'
 
-    # Test Gemini 3.8 Flash without effort (should default to medium)
+    # Test Gemini 3.8 Flash without effort (should default to low)
     $gemini38Auto = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model gemini-3.8-flash -Prompt $env:TEST_PROMPT'
     Assert-Equal 0 $gemini38Auto.ExitCode ('Gemini 3.8 Flash auto effort test failed: ' + ($gemini38Auto.Output -join [Environment]::NewLine))
     $gemini38AutoArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
     Assert-Equal 'gemini-3.8-flash' $gemini38AutoArgs[[Array]::IndexOf($gemini38AutoArgs, '--model') + 1] 'Gemini 3.8 Flash model without effort failed.'
-    Assert-Equal 'medium' $gemini38AutoArgs[[Array]::IndexOf($gemini38AutoArgs, '--effort') + 1] 'Gemini 3.8 Flash model should auto-default effort to medium.'
+    Assert-Equal 'low' $gemini38AutoArgs[[Array]::IndexOf($gemini38AutoArgs, '--effort') + 1] 'Gemini 3.8 Flash model should auto-default effort to low.'
 
     # Test human-readable Gemini 3.8 Flash with parenthesized effort
     $gemini38Human = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model "Gemini 3.8 Flash (High)" -Prompt $env:TEST_PROMPT'
@@ -173,7 +173,7 @@ try {
     Assert-Equal 0 $gemini4Auto.ExitCode ('Gemini 4 Argon auto effort test failed: ' + ($gemini4Auto.Output -join [Environment]::NewLine))
     $gemini4AutoArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
     Assert-Equal 'gemini-4-argon' $gemini4AutoArgs[[Array]::IndexOf($gemini4AutoArgs, '--model') + 1] 'Gemini 4 Argon model without effort failed.'
-    Assert-Equal 'medium' $gemini4AutoArgs[[Array]::IndexOf($gemini4AutoArgs, '--effort') + 1] 'Gemini 4 Argon model should auto-default effort to medium.'
+    Assert-Equal 'low' $gemini4AutoArgs[[Array]::IndexOf($gemini4AutoArgs, '--effort') + 1] 'Gemini 4 Argon model should auto-default effort to low.'
 
     $gemini4Human = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model "Gemini 4 Argon (High)" -Prompt $env:TEST_PROMPT'
     Assert-Equal 0 $gemini4Human.ExitCode ('Gemini 4 Argon human-readable model test failed: ' + ($gemini4Human.Output -join [Environment]::NewLine))

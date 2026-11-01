@@ -102,7 +102,7 @@ try {
     Assert-Equal $addDir $analysisArguments[$firstAnalysisAddDir + 3] 'Dispatcher did not forward AGY AddDir.'
     Assert-Equal $prompt $analysisArguments[1] 'Dispatcher changed the AGY prompt.'
     Assert-Equal 'gemini-3.8-flash' $analysisArguments[[Array]::IndexOf($analysisArguments, '--model') + 1] 'Default AGY model must be gemini-3.8-flash.'
-    Assert-Equal 'medium' $analysisArguments[[Array]::IndexOf($analysisArguments, '--effort') + 1] 'Default AGY effort must be medium.'
+    Assert-Equal 'low' $analysisArguments[[Array]::IndexOf($analysisArguments, '--effort') + 1] 'Default AGY effort must be low.'
 
     Clear-BackendEvidence $evidenceFiles
     $env:FAKE_CLAUDE_OUTPUT = 'review result'
@@ -119,8 +119,8 @@ try {
     $defaultCodex = Invoke-EncodedChild '& $env:TEST_WRAPPER -Agent codex -Sandbox read-only -CodexPath $env:TEST_CODEX -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
     Assert-Equal 0 $defaultCodex.ExitCode ('Default Codex dispatch failed: ' + ($defaultCodex.Output -join [Environment]::NewLine))
     $defaultCodexArguments = Read-RecordedArguments $codexArgsFile
-    Assert-Equal 'gpt-6.1-sol' $defaultCodexArguments[[Array]::IndexOf($defaultCodexArguments, '--model') + 1] 'Default Codex model must be GPT-6.1 Sol.'
-    Assert-True ($defaultCodexArguments -contains 'model_reasoning_effort="medium"') 'Default Codex effort must be medium.'
+    Assert-Equal 'gpt-6.1-terra' $defaultCodexArguments[[Array]::IndexOf($defaultCodexArguments, '--model') + 1] 'Default Codex model must be GPT-6.1 Terra.'
+    Assert-True ($defaultCodexArguments -contains 'model_reasoning_effort="low"') 'Default Codex effort must be low.'
 
     Clear-BackendEvidence $evidenceFiles
     $implementation = Invoke-EncodedChild '& $env:TEST_WRAPPER -TaskType implementation -Sandbox workspace-write -CodexModel codex-child-model -CodexEffort xhigh -CodexPath $env:TEST_CODEX -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
