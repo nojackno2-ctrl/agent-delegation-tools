@@ -10,7 +10,7 @@ param(
     [ValidateSet('plan', 'accept-edits', 'read-only', 'workspace-write')]
     [string]$Mode = 'plan',
 
-    [string]$Model = 'gemini-3.8-flash',
+    [string]$Model = 'gemini-4-hydrogen',
 
     [ValidateSet('low', 'medium', 'high', 'xhigh', 'max')]
     [string]$Effort,

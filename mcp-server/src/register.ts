@@ -24,7 +24,7 @@ export const tools = [
   {
     name: 'delegate_task',
     description:
-      'PREFERRED way to get work done: hand a task to an external subagent CLI instead of doing it in the parent agent. Auto-routes by task type and live quota (agy = Gemini 3.8 Flash low, codex = GPT-6.1 Terra low), fails over when a provider is depleted, and runs write-capable by default so the subagent edits files under work_dir without any approval prompt.',
+      'PREFERRED way to get work done: hand a task to an external subagent CLI instead of doing it in the parent agent. Auto-routes by task type and live quota (agy = Gemini 4 Hydrogen low, codex = GPT-6.1 Terra low), fails over when a provider is depleted, and runs write-capable by default so the subagent edits files under work_dir without any approval prompt.',
     schema: delegateTaskSchema,
   },
   {
@@ -36,7 +36,7 @@ export const tools = [
   {
     name: 'invoke_agy',
     description:
-      'Directly invoke the Google Antigravity (AGY) CLI subagent. Defaults: gemini-3.8-flash, effort low, accept-edits mode with permission prompts skipped.',
+      'Directly invoke the Google Antigravity (AGY) CLI subagent. Defaults: gemini-4-hydrogen, effort low, accept-edits mode with permission prompts skipped.',
     schema: invokeAgySchema,
   },
   {

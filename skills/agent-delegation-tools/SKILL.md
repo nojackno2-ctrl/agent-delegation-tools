@@ -30,7 +30,7 @@ Unless the user names a different model, delegate with these and do not override
 
 | Backend | Model | Effort |
 |---|---|---|
-| Antigravity (AGY) | `gemini-3.8-flash` | `low` |
+| Antigravity (AGY) | `gemini-4-hydrogen` | `low` |
 | Codex CLI | `gpt-6.1-terra` | `low` |
 | Claude CLI | `claude-sonnet-5-5` | `low` |
 
@@ -108,7 +108,7 @@ When the parent runs under `CodexSandboxOffline`, invoke external CLIs and quota
 ### Quota-Aware Load Balancing Rule
 
 - When a provider has `<= 10%` remaining quota or is in an `unavailable`/rate-limited state, **do not route new tasks to it**.
-- Instead, route to the healthiest provider (e.g. AGY Gemini 3.8 Flash or AGY Claude / GPT) and specify fallback chains.
+- Instead, route to the healthiest provider (e.g. AGY Gemini 4 Hydrogen or AGY Claude / GPT) and specify fallback chains.
 - Pass `-BalanceQuota` to `delegate.ps1` to perform automated quota balancing across backends.
 
 ## Choose child settings and backend
@@ -132,12 +132,12 @@ On Windows, Codex logs containing `helper_unknown_error: setup refresh had error
 ```powershell
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'agy.ps1') `
     -WorkDir 'C:\path\to\project' -Mode workspace-write -SkipPermissions `
-    -Model 'gemini-3.8-flash' -Effort low `
+    -Model 'gemini-4-hydrogen' -Effort low `
     -OutFile "$env:TEMP\agy-worker.txt" `
     'Implement the authentication middleware in src/auth.ts and update tests.'
 ```
 
-Use `gemini-3.8-flash` (with `-Effort low|medium|high`, `gemini-3.8-flash-high`, or `gemini-3.8-flash-low`) for fast scaffolding, implementation, or deep reasoning plans. AGY also supports `gemini-4-hydrogen` (with `-Effort low|medium|high|xhigh`), `gemini-4-argon` (with `-Effort low|medium|high`), `gemini-pro-orchestrator-g1-pro` (`Orchestrator (Argon)`, fixed effort — omits `--effort`), `claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-oss-120b-medium`, and legacy `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro`. Use `-SkipPermissions` with write modes so headless runs do not block on terminal prompts. AGY enforces `-PrintTimeout` itself; the default `0` waits until the turn completes.
+Use `gemini-4-hydrogen` (with `-Effort low|medium|high|xhigh`, `gemini-4-hydrogen-high`, or `gemini-4-hydrogen-low`) for fast scaffolding, implementation, or deep reasoning plans. AGY also supports `gemini-3.8-flash` (with `-Effort low|medium|high`), `gemini-4-argon` (with `-Effort low|medium|high`), `gemini-pro-orchestrator-g1-pro` (`Orchestrator (Argon)`, fixed effort — omits `--effort`), `claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-oss-120b-medium`, and legacy `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.1-pro`. Use `-SkipPermissions` with write modes so headless runs do not block on terminal prompts. AGY enforces `-PrintTimeout` itself; the default `0` waits until the turn completes.
 
 ### Codex CLI worker (Implementation / File Modification)
 
@@ -167,7 +167,7 @@ The wrapper sends the prompt through UTF-8 stdin, disables prompt suggestions, a
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'delegate.ps1') `
     -TaskType implementation -Sandbox workspace-write -BalanceQuota `
     -WorkDir 'C:\path\to\project' `
-    -AgyModel 'gemini-3.8-flash' -AgyEffort low -CodexModel 'gpt-6.1-terra' -CodexEffort low `
+    -AgyModel 'gemini-4-hydrogen' -AgyEffort low -CodexModel 'gpt-6.1-terra' -CodexEffort low `
     -ClaudeModel 'claude-sonnet-5-5' -ClaudeEffort low -OutFile "$env:TEMP\worker.txt" `
     'Implement the requested feature in src/service.ts and verify tests pass.'
 ```

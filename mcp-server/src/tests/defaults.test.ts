@@ -10,8 +10,8 @@ import { invokeAgy } from '../services/invokers/agy-invoker.js';
 
 describe('Delegation defaults policy', () => {
   describe('Configured models', () => {
-    it('should default AGY to Gemini 3.8 Flash at low effort', () => {
-      assert.equal(DEFAULT_MODELS.agy.model, 'gemini-3.8-flash');
+    it('should default AGY to Gemini 4 Hydrogen at low effort', () => {
+      assert.equal(DEFAULT_MODELS.agy.model, 'gemini-4-hydrogen');
       assert.equal(DEFAULT_MODELS.agy.effort, 'low');
     });
 

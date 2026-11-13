@@ -6,7 +6,7 @@
 
 | 後端 | CLI | 預設模型 | 預設 effort |
 |------|-----|----------|-------------|
-| `agy` | Google Antigravity | `gemini-3.8-flash` | `low` |
+| `agy` | Google Antigravity | `gemini-4-hydrogen` | `low` |
 | `codex` | OpenAI Codex | `gpt-6.1-terra` | `low` |
 | `claude` | Anthropic Claude CLI | `claude-sonnet-5-5` | `low` |
 | `local` | 本機 Ollama（HTTP，非 CLI） | `laguna-xs-2.1:latest` | `think=true` |

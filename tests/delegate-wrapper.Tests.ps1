@@ -101,7 +101,7 @@ try {
     Assert-Equal $workDir $analysisArguments[$firstAnalysisAddDir + 1] 'Dispatcher must register the AGY work directory via --add-dir.'
     Assert-Equal $addDir $analysisArguments[$firstAnalysisAddDir + 3] 'Dispatcher did not forward AGY AddDir.'
     Assert-Equal $prompt $analysisArguments[1] 'Dispatcher changed the AGY prompt.'
-    Assert-Equal 'gemini-3.8-flash' $analysisArguments[[Array]::IndexOf($analysisArguments, '--model') + 1] 'Default AGY model must be gemini-3.8-flash.'
+    Assert-Equal 'gemini-4-hydrogen' $analysisArguments[[Array]::IndexOf($analysisArguments, '--model') + 1] 'Default AGY model must be gemini-4-hydrogen.'
     Assert-Equal 'low' $analysisArguments[[Array]::IndexOf($analysisArguments, '--effort') + 1] 'Default AGY effort must be low.'
 
     Clear-BackendEvidence $evidenceFiles

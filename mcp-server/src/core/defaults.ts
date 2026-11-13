@@ -27,7 +27,7 @@ export function codexLocalProfile(model: string | undefined): string | undefined
 
 /** Default model + reasoning effort per backend. Overridable per call. */
 export const DEFAULT_MODELS = {
-  agy: { model: 'gemini-3.8-flash', effort: 'low' },
+  agy: { model: 'gemini-4-hydrogen', effort: 'low' },
   codex: { model: 'gpt-6.1-terra', effort: 'low' },
   claude: { model: 'claude-sonnet-5-5', effort: 'low' },
 } as const satisfies Record<AgentName, { model: string; effort: string }>;

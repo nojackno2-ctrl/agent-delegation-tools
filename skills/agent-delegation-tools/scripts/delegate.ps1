@@ -210,7 +210,7 @@ function Resolve-OutputPath {
 
 # Fallback child settings when the parent supplies none. Explicit parameters win.
 $script:DefaultBackendModel = @{
-    agy    = 'gemini-3.8-flash'
+    agy    = 'gemini-4-hydrogen'
     codex  = 'gpt-6.1-terra'
     claude = 'claude-sonnet-5-5'
 }
