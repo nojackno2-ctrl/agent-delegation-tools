@@ -10,7 +10,7 @@ export interface InvokeAgyOptions {
   prompt: string;
   mode?: 'plan' | 'accept-edits' | 'read-only' | 'workspace-write';
   model?: string;
-  effort?: 'low' | 'medium' | 'high';
+  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   workDir?: string;
   addDirs?: string[];
   outFile?: string;
@@ -43,7 +43,7 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
         ? 'accept-edits'
         : options.mode || 'accept-edits';
 
-  let effectiveModel = options.model || DEFAULT_MODELS.agy.model;
+  let effectiveModel = (options.model || DEFAULT_MODELS.agy.model).trim();
   let effectiveEffort = options.effort;
 
   // Normalize model and effort aliases
@@ -57,6 +57,16 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
     effectiveModel = `gemini-${argonMatch[1]}-argon`;
     const effortPart = argonMatch[2] || argonMatch[3];
     if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as any;
+  }
+  const hydrogenMatch = effectiveModel.match(/^(?:gemini[ -]?)?(4)[ -]?hydrogen(?:\s*\((xhigh|high|medium|low)\)|[ -](xhigh|high|medium|low))?$/i);
+  if (hydrogenMatch) {
+    effectiveModel = `gemini-${hydrogenMatch[1]}-hydrogen`;
+    const effortPart = hydrogenMatch[2] || hydrogenMatch[3];
+    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as any;
+  }
+  const orchestratorMatch = effectiveModel.match(/^(?:gemini[ -]?pro[ -]?orchestrator[ -]?g1[ -]?pro|orchestrator(?:\s*\(argon\)|[ -]argon)?)$/i);
+  if (orchestratorMatch) {
+    effectiveModel = 'gemini-pro-orchestrator-g1-pro';
   }
   const flashMatch = effectiveModel.match(/^(?:gemini[ -]?)?(3\.[5-8])[ -]?flash(?:\s*\((high|medium|low)\)|[ -](high|medium|low))?$/i);
   if (flashMatch) {
@@ -81,8 +91,10 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
     effectiveModel = 'gpt-oss-120b-medium';
   }
 
-  // AGY CLI rejects Gemini/Claude models without --effort, so always carry one.
-  if (effectiveModel === 'gpt-oss-120b-medium') {
+  // AGY CLI rejects most Gemini/Claude models without --effort, while
+  // fixed-effort models reject --effort.
+  const noEffortModels = new Set(['gpt-oss-120b-medium', 'gemini-pro-orchestrator-g1-pro']);
+  if (noEffortModels.has(effectiveModel)) {
     effectiveEffort = undefined;
   } else if (!effectiveEffort) {
     effectiveEffort = DEFAULT_MODELS.agy.effort;

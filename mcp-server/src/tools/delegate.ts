@@ -62,11 +62,11 @@ export const delegateTaskSchema = z.object({
   agy_model: z
     .string()
     .optional()
-    .describe(`Model override for Antigravity. Default ${DEFAULT_MODELS.agy.model}; use gemini-4-argon for deep architecture work.`),
+    .describe(`Model override for Antigravity. Default ${DEFAULT_MODELS.agy.model}; use gemini-4-argon, gemini-4-hydrogen, or gemini-pro-orchestrator-g1-pro for deep architecture/orchestration work.`),
   agy_effort: z
-    .enum(['low', 'medium', 'high'])
+    .enum(['low', 'medium', 'high', 'xhigh', 'max'])
     .optional()
-    .describe(`Reasoning effort for Antigravity. Default ${DEFAULT_MODELS.agy.effort}.`),
+    .describe(`Reasoning effort for Antigravity (low|medium|high|xhigh|max). Default ${DEFAULT_MODELS.agy.effort}.`),
   claude_model: z
     .string()
     .optional()
@@ -221,11 +221,11 @@ export const delegateParallelSchema = z.object({
   agy_model: z
     .string()
     .optional()
-    .describe(`Model override for Antigravity. Default ${DEFAULT_MODELS.agy.model}; use gemini-4-argon for deep architecture work.`),
+    .describe(`Model override for Antigravity. Default ${DEFAULT_MODELS.agy.model}; use gemini-4-argon, gemini-4-hydrogen, or gemini-pro-orchestrator-g1-pro for deep architecture/orchestration work.`),
   agy_effort: z
-    .enum(['low', 'medium', 'high'])
+    .enum(['low', 'medium', 'high', 'xhigh', 'max'])
     .optional()
-    .describe(`Reasoning effort for Antigravity. Default ${DEFAULT_MODELS.agy.effort}.`),
+    .describe(`Reasoning effort for Antigravity (low|medium|high|xhigh|max). Default ${DEFAULT_MODELS.agy.effort}.`),
   claude_model: z
     .string()
     .optional()

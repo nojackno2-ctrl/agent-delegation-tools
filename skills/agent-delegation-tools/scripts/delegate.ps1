@@ -28,7 +28,7 @@ param(
 
     [string]$AgyModel,
 
-    [ValidateSet('low', 'medium', 'high')]
+    [ValidateSet('low', 'medium', 'high', 'xhigh', 'max')]
     [string]$AgyEffort,
 
     [string]$CodexModel,

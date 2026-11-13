@@ -14,7 +14,7 @@ export interface ParallelTaskOptions {
   workDir?: string;
   timeoutSec?: number;
   agyModel?: string;
-  agyEffort?: 'low' | 'medium' | 'high';
+  agyEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   claudeModel?: string;
   claudeEffort?: string;
   codexModel?: string;

@@ -141,6 +141,40 @@ describe('Delegation defaults policy', () => {
         const fixedArgs = JSON.parse(fixed.stdout) as string[];
         assert.equal(fixedArgs[fixedArgs.indexOf('--model') + 1], 'gpt-oss-120b-medium');
         assert.equal(fixedArgs.includes('--effort'), false);
+
+        const hydroHuman = await invokeAgy({
+          prompt: 'test',
+          model: 'Gemini 4 Hydrogen (XHigh)',
+          workDir: tempDir,
+          agyPath: agyCmd,
+        });
+        assert.equal(hydroHuman.exitCode, 0);
+        const hydroHumanArgs = JSON.parse(hydroHuman.stdout) as string[];
+        assert.equal(hydroHumanArgs[hydroHumanArgs.indexOf('--model') + 1], 'gemini-4-hydrogen');
+        assert.equal(hydroHumanArgs[hydroHumanArgs.indexOf('--effort') + 1], 'xhigh');
+
+        const hydroAuto = await invokeAgy({
+          prompt: 'test',
+          model: 'gemini-4-hydrogen',
+          workDir: tempDir,
+          agyPath: agyCmd,
+        });
+        assert.equal(hydroAuto.exitCode, 0);
+        const hydroAutoArgs = JSON.parse(hydroAuto.stdout) as string[];
+        assert.equal(hydroAutoArgs[hydroAutoArgs.indexOf('--model') + 1], 'gemini-4-hydrogen');
+        assert.equal(hydroAutoArgs[hydroAutoArgs.indexOf('--effort') + 1], 'low');
+
+        const orch = await invokeAgy({
+          prompt: 'test',
+          model: 'Orchestrator (Argon)',
+          effort: 'high',
+          workDir: tempDir,
+          agyPath: agyCmd,
+        });
+        assert.equal(orch.exitCode, 0);
+        const orchArgs = JSON.parse(orch.stdout) as string[];
+        assert.equal(orchArgs[orchArgs.indexOf('--model') + 1], 'gemini-pro-orchestrator-g1-pro');
+        assert.equal(orchArgs.includes('--effort'), false);
       } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
       }

@@ -15,7 +15,7 @@ export interface DelegateOptions {
   fallbackAgent?: FallbackAgent;
   workDir?: string;
   agyModel?: string;
-  agyEffort?: 'low' | 'medium' | 'high';
+  agyEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   claudeModel?: string;
   claudeEffort?: string;
   codexModel?: string;

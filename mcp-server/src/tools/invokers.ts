@@ -22,12 +22,12 @@ export const invokeAgySchema = z.object({
     .string()
     .optional()
     .default(DEFAULT_MODELS.agy.model)
-    .describe(`Model name. Defaults to ${DEFAULT_MODELS.agy.model}; gemini-4-argon for deep architecture work.`),
+    .describe(`Model name. Defaults to ${DEFAULT_MODELS.agy.model}; gemini-4-argon, gemini-4-hydrogen, or gemini-pro-orchestrator-g1-pro for deep architecture/orchestration work.`),
   effort: z
-    .enum(['low', 'medium', 'high'])
+    .enum(['low', 'medium', 'high', 'xhigh', 'max'])
     .optional()
     .default(DEFAULT_MODELS.agy.effort)
-    .describe(`Thinking effort. Defaults to ${DEFAULT_MODELS.agy.effort}.`),
+    .describe(`Thinking effort (low|medium|high|xhigh|max). Defaults to ${DEFAULT_MODELS.agy.effort}.`),
   work_dir: z.string().min(1).describe('Absolute path to existing working directory.'),
   timeout_sec: z.number().int().min(0).max(86400).optional().default(0).describe('Optional timeout in seconds. Default 0 = no limit.'),
 });

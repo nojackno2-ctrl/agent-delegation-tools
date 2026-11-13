@@ -1,5 +1,11 @@
 # AI handoff
 
+## 2026-11-13 Antigravity：更新 AGY 可呼叫的模型與 effort 支援
+
+- 依 `agy models`（18 個模型/程度組合）新增 `gemini-4-hydrogen`（支援 `low`/`medium`/`high`/`xhigh`）與 `gemini-pro-orchestrator-g1-pro`（`Orchestrator (Argon)`）正規化，並保留 `gemini-3.8-flash`（`low`）為預設。
+- 實測 `agy --model gemini-4-hydrogen --effort xhigh` 回傳 `HYDROGEN_OK`（exit 0）；`agy --model gemini-pro-orchestrator-g1-pro --effort low` 遭 CLI 拒絕（`--effort is not supported`），故在 `agy-invoker.ts` 與 `agy.ps1` 將其列為固定無 `--effort` 模型（同 `gpt-oss-120b-medium`），同時放寬 `effort`/`agy_effort` 至 `low|medium|high|xhigh|max`。
+- 驗證：`npm run lint`、build 與 `npm test`（118/118，含 `Gemini 4 Hydrogen (XHigh)` 與 `Orchestrator (Argon)` 測試）通過；`tests/run-all.ps1` 9/9 通過；`install.ps1` 已同步 4 份個人技能副本（SHA-256 驗證通過），並已更新 Antigravity MCP schema（既有 MCP 連線需重連/重啟才會載入新 schema）。
+
 ## 2026-11-01 Codex：更新子代理模型與預設思考程度
 
 - Codex 預設改為 `gpt-6.1-terra`；Codex、AGY、Claude 預設 effort 為 `low`，保留明確覆寫；AGY `gpt-oss-120b-medium` 為固定 medium 例外。

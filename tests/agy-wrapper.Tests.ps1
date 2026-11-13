@@ -187,6 +187,32 @@ try {
     Assert-Equal 'gemini-4-argon' $gemini4HyphenArgs[[Array]::IndexOf($gemini4HyphenArgs, '--model') + 1] 'Hyphenated Gemini 4 Argon was not normalized.'
     Assert-Equal 'low' $gemini4HyphenArgs[[Array]::IndexOf($gemini4HyphenArgs, '--effort') + 1] 'Hyphenated effort in Gemini 4 Argon was not parsed.'
 
+    # Test Gemini 4 Hydrogen model normalization (auto effort, human-readable XHigh, hyphenated xhigh)
+    $hydroAuto = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model gemini-4-hydrogen -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $hydroAuto.ExitCode ('Gemini 4 Hydrogen auto effort test failed: ' + ($hydroAuto.Output -join [Environment]::NewLine))
+    $hydroAutoArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
+    Assert-Equal 'gemini-4-hydrogen' $hydroAutoArgs[[Array]::IndexOf($hydroAutoArgs, '--model') + 1] 'Gemini 4 Hydrogen model without effort failed.'
+    Assert-Equal 'low' $hydroAutoArgs[[Array]::IndexOf($hydroAutoArgs, '--effort') + 1] 'Gemini 4 Hydrogen model should auto-default effort to low.'
+
+    $hydroHuman = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model "Gemini 4 Hydrogen (XHigh)" -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $hydroHuman.ExitCode ('Gemini 4 Hydrogen human-readable model test failed: ' + ($hydroHuman.Output -join [Environment]::NewLine))
+    $hydroHumanArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
+    Assert-Equal 'gemini-4-hydrogen' $hydroHumanArgs[[Array]::IndexOf($hydroHumanArgs, '--model') + 1] 'Human-readable Gemini 4 Hydrogen was not normalized.'
+    Assert-Equal 'xhigh' $hydroHumanArgs[[Array]::IndexOf($hydroHumanArgs, '--effort') + 1] 'Parenthesized XHigh effort in Gemini 4 Hydrogen was not parsed.'
+
+    $hydroHyphen = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model "gemini-4-hydrogen-xhigh" -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $hydroHyphen.ExitCode ('Gemini 4 Hydrogen hyphen xhigh test failed: ' + ($hydroHyphen.Output -join [Environment]::NewLine))
+    $hydroHyphenArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
+    Assert-Equal 'gemini-4-hydrogen' $hydroHyphenArgs[[Array]::IndexOf($hydroHyphenArgs, '--model') + 1] 'Hyphenated Gemini 4 Hydrogen was not normalized.'
+    Assert-Equal 'xhigh' $hydroHyphenArgs[[Array]::IndexOf($hydroHyphenArgs, '--effort') + 1] 'Hyphenated xhigh effort in Gemini 4 Hydrogen was not parsed.'
+
+    # Test Orchestrator (Argon) omits --effort even when -Effort is supplied
+    $orchRun = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model "Orchestrator (Argon)" -Effort high -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $orchRun.ExitCode ('Orchestrator (Argon) test failed: ' + ($orchRun.Output -join [Environment]::NewLine))
+    $orchArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
+    Assert-Equal 'gemini-pro-orchestrator-g1-pro' $orchArgs[[Array]::IndexOf($orchArgs, '--model') + 1] 'Orchestrator (Argon) was not normalized.'
+    Assert-True (-not ($orchArgs -contains '--effort')) 'Orchestrator (Argon) must not pass --effort.'
+
     # Test --sandbox flag is passed when SkipPermissions is used with workspace-write
     $env:FAKE_AGY_EXIT_CODE = '0'
     $env:FAKE_AGY_OUTPUT = 'sandbox test'

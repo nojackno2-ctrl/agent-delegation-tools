@@ -12,7 +12,7 @@ param(
 
     [string]$Model = 'gemini-3.8-flash',
 
-    [ValidateSet('low', 'medium', 'high')]
+    [ValidateSet('low', 'medium', 'high', 'xhigh', 'max')]
     [string]$Effort,
 
     [string]$WorkDir,
@@ -187,11 +187,11 @@ if ($effectiveModel) {
         $trimmedModel = $Matches[1].Trim()
         $parsedEffort = 'high'
     }
-    elseif ($trimmedModel -match '^(?i)(.*?)\s*\((low|medium|high)\)$') {
+    elseif ($trimmedModel -match '^(?i)(.*?)\s*\((low|medium|high|xhigh|max)\)$') {
         $trimmedModel = $Matches[1].Trim()
         $parsedEffort = $Matches[2].ToLowerInvariant()
     }
-    elseif ($trimmedModel -match '^(?i)(.*?)[ -](low|medium|high)$') {
+    elseif ($trimmedModel -match '^(?i)(.*?)[ -](low|medium|high|xhigh|max)$') {
         $trimmedModel = $Matches[1].Trim()
         $parsedEffort = $Matches[2].ToLowerInvariant()
     }
@@ -204,7 +204,10 @@ if ($effectiveModel) {
     if ($trimmedModel -match '^(?i)gpt[ -]?oss[ -]?120b(?:\s*\(medium\)|-medium)?$') {
         $trimmedModel = 'gpt-oss-120b-medium'
     }
-    elseif ($trimmedModel -match '^(?i)(?:gemini[ -]?)?(\d+(?:\.\d+)?)[ -]?(argon|flash|pro)$') {
+    elseif ($trimmedModel -match '^(?i)(?:gemini[ -]?pro[ -]?orchestrator[ -]?g1[ -]?pro|orchestrator(?:\s*\(argon\)|[ -]argon)?)$') {
+        $trimmedModel = 'gemini-pro-orchestrator-g1-pro'
+    }
+    elseif ($trimmedModel -match '^(?i)(?:gemini[ -]?)?(\d+(?:\.\d+)?)[ -]?(argon|hydrogen|flash|pro)$') {
         $trimmedModel = "gemini-$($Matches[1])-$($Matches[2].ToLowerInvariant())"
     }
     elseif ($trimmedModel -match '^(?i)(?:claude[ -]?)?(opus|sonnet)[ -]?(?:5\.5|5-5)$') {
@@ -214,7 +217,7 @@ if ($effectiveModel) {
     $effectiveModel = $trimmedModel
 
     # 3. Default effort to low when model is specified without effort
-    if ($effectiveModel -eq 'gpt-oss-120b-medium') {
+    if ($effectiveModel -in @('gpt-oss-120b-medium', 'gemini-pro-orchestrator-g1-pro')) {
         $effectiveEffort = $null
     }
     elseif (-not $effectiveEffort) {
