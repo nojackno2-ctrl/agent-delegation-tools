@@ -204,10 +204,13 @@ if ($effectiveModel) {
     if ($trimmedModel -match '^(?i)gpt[ -]?oss[ -]?120b(?:\s*\(medium\)|-medium)?$') {
         $trimmedModel = 'gpt-oss-120b-medium'
     }
+    elseif ($trimmedModel -match '^(?i)(?:gemini[ -]?pro[ -]?orchestrator[ -]?neon|orchestrator(?:\s*\((?:gemini[ -]?4[ -]?)?neon\)|[ -](?:gemini[ -]?4[ -]?)?neon))$') {
+        $trimmedModel = 'gemini-pro-orchestrator-neon'
+    }
     elseif ($trimmedModel -match '^(?i)(?:gemini[ -]?pro[ -]?orchestrator[ -]?g1[ -]?pro|orchestrator(?:\s*\(argon\)|[ -]argon)?)$') {
         $trimmedModel = 'gemini-pro-orchestrator-g1-pro'
     }
-    elseif ($trimmedModel -match '^(?i)(?:gemini[ -]?)?(\d+(?:\.\d+)?)[ -]?(argon|hydrogen|flash|pro)$') {
+    elseif ($trimmedModel -match '^(?i)(?:gemini[ -]?)?(\d+(?:\.\d+)?)[ -]?(neon|argon|hydrogen|flash|pro)$') {
         $trimmedModel = "gemini-$($Matches[1])-$($Matches[2].ToLowerInvariant())"
     }
     elseif ($trimmedModel -match '^(?i)(?:claude[ -]?)?(opus|sonnet)[ -]?(?:5\.5|5-5)$') {
@@ -217,7 +220,7 @@ if ($effectiveModel) {
     $effectiveModel = $trimmedModel
 
     # 3. Default effort to low when model is specified without effort
-    if ($effectiveModel -in @('gpt-oss-120b-medium', 'gemini-pro-orchestrator-g1-pro')) {
+    if ($effectiveModel -in @('gpt-oss-120b-medium', 'gemini-pro-orchestrator-g1-pro', 'gemini-pro-orchestrator-neon')) {
         $effectiveEffort = $null
     }
     elseif (-not $effectiveEffort) {

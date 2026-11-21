@@ -213,6 +213,32 @@ try {
     Assert-Equal 'gemini-pro-orchestrator-g1-pro' $orchArgs[[Array]::IndexOf($orchArgs, '--model') + 1] 'Orchestrator (Argon) was not normalized.'
     Assert-True (-not ($orchArgs -contains '--effort')) 'Orchestrator (Argon) must not pass --effort.'
 
+    # Test Gemini 4 Neon model normalization (auto effort, human-readable XHigh, hyphenated xhigh)
+    $neonAuto = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model gemini-4-neon -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $neonAuto.ExitCode ('Gemini 4 Neon auto effort test failed: ' + ($neonAuto.Output -join [Environment]::NewLine))
+    $neonAutoArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
+    Assert-Equal 'gemini-4-neon' $neonAutoArgs[[Array]::IndexOf($neonAutoArgs, '--model') + 1] 'Gemini 4 Neon model without effort failed.'
+    Assert-Equal 'low' $neonAutoArgs[[Array]::IndexOf($neonAutoArgs, '--effort') + 1] 'Gemini 4 Neon model should auto-default effort to low.'
+
+    $neonHuman = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model "Gemini 4 Neon (XHigh)" -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $neonHuman.ExitCode ('Gemini 4 Neon human-readable model test failed: ' + ($neonHuman.Output -join [Environment]::NewLine))
+    $neonHumanArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
+    Assert-Equal 'gemini-4-neon' $neonHumanArgs[[Array]::IndexOf($neonHumanArgs, '--model') + 1] 'Human-readable Gemini 4 Neon was not normalized.'
+    Assert-Equal 'xhigh' $neonHumanArgs[[Array]::IndexOf($neonHumanArgs, '--effort') + 1] 'Parenthesized XHigh effort in Gemini 4 Neon was not parsed.'
+
+    $neonHyphen = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model "gemini-4-neon-xhigh" -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $neonHyphen.ExitCode ('Gemini 4 Neon hyphen xhigh test failed: ' + ($neonHyphen.Output -join [Environment]::NewLine))
+    $neonHyphenArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
+    Assert-Equal 'gemini-4-neon' $neonHyphenArgs[[Array]::IndexOf($neonHyphenArgs, '--model') + 1] 'Hyphenated Gemini 4 Neon was not normalized.'
+    Assert-Equal 'xhigh' $neonHyphenArgs[[Array]::IndexOf($neonHyphenArgs, '--effort') + 1] 'Hyphenated xhigh effort in Gemini 4 Neon was not parsed.'
+
+    # Test Orchestrator (Neon) omits --effort even when -Effort is supplied
+    $orchNeonRun = Invoke-EncodedChild '& $env:TEST_WRAPPER -AgyPath $env:TEST_CLI -WorkDir $env:TEST_WORKDIR -Model "Orchestrator (Neon)" -Effort high -Prompt $env:TEST_PROMPT'
+    Assert-Equal 0 $orchNeonRun.ExitCode ('Orchestrator (Neon) test failed: ' + ($orchNeonRun.Output -join [Environment]::NewLine))
+    $orchNeonArgs = [IO.File]::ReadAllLines($argsFile, [Text.Encoding]::UTF8)
+    Assert-Equal 'gemini-pro-orchestrator-neon' $orchNeonArgs[[Array]::IndexOf($orchNeonArgs, '--model') + 1] 'Orchestrator (Neon) was not normalized.'
+    Assert-True (-not ($orchNeonArgs -contains '--effort')) 'Orchestrator (Neon) must not pass --effort.'
+
     # Test --sandbox flag is passed when SkipPermissions is used with workspace-write
     $env:FAKE_AGY_EXIT_CODE = '0'
     $env:FAKE_AGY_OUTPUT = 'sandbox test'

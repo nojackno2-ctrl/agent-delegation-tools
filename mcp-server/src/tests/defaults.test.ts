@@ -175,6 +175,40 @@ describe('Delegation defaults policy', () => {
         const orchArgs = JSON.parse(orch.stdout) as string[];
         assert.equal(orchArgs[orchArgs.indexOf('--model') + 1], 'gemini-pro-orchestrator-g1-pro');
         assert.equal(orchArgs.includes('--effort'), false);
+
+        const neonHuman = await invokeAgy({
+          prompt: 'test',
+          model: 'Gemini 4 Neon (XHigh)',
+          workDir: tempDir,
+          agyPath: agyCmd,
+        });
+        assert.equal(neonHuman.exitCode, 0);
+        const neonHumanArgs = JSON.parse(neonHuman.stdout) as string[];
+        assert.equal(neonHumanArgs[neonHumanArgs.indexOf('--model') + 1], 'gemini-4-neon');
+        assert.equal(neonHumanArgs[neonHumanArgs.indexOf('--effort') + 1], 'xhigh');
+
+        const neonAuto = await invokeAgy({
+          prompt: 'test',
+          model: 'gemini-4-neon',
+          workDir: tempDir,
+          agyPath: agyCmd,
+        });
+        assert.equal(neonAuto.exitCode, 0);
+        const neonAutoArgs = JSON.parse(neonAuto.stdout) as string[];
+        assert.equal(neonAutoArgs[neonAutoArgs.indexOf('--model') + 1], 'gemini-4-neon');
+        assert.equal(neonAutoArgs[neonAutoArgs.indexOf('--effort') + 1], 'low');
+
+        const orchNeon = await invokeAgy({
+          prompt: 'test',
+          model: 'Orchestrator (Neon)',
+          effort: 'high',
+          workDir: tempDir,
+          agyPath: agyCmd,
+        });
+        assert.equal(orchNeon.exitCode, 0);
+        const orchNeonArgs = JSON.parse(orchNeon.stdout) as string[];
+        assert.equal(orchNeonArgs[orchNeonArgs.indexOf('--model') + 1], 'gemini-pro-orchestrator-neon');
+        assert.equal(orchNeonArgs.includes('--effort'), false);
       } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
       }

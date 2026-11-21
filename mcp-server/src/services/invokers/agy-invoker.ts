@@ -52,6 +52,12 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
     effectiveModel = thinkingMatch[1].trim();
     if (!effectiveEffort) effectiveEffort = 'high';
   }
+  const neonMatch = effectiveModel.match(/^(?:gemini[ -]?)?(4)[ -]?neon(?:\s*\((xhigh|high|medium|low)\)|[ -](xhigh|high|medium|low))?$/i);
+  if (neonMatch) {
+    effectiveModel = `gemini-${neonMatch[1]}-neon`;
+    const effortPart = neonMatch[2] || neonMatch[3];
+    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as any;
+  }
   const argonMatch = effectiveModel.match(/^(?:gemini[ -]?)?(4)[ -]?argon(?:\s*\((high|medium|low)\)|[ -](high|medium|low))?$/i);
   if (argonMatch) {
     effectiveModel = `gemini-${argonMatch[1]}-argon`;
@@ -63,6 +69,10 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
     effectiveModel = `gemini-${hydrogenMatch[1]}-hydrogen`;
     const effortPart = hydrogenMatch[2] || hydrogenMatch[3];
     if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as any;
+  }
+  const orchestratorNeonMatch = effectiveModel.match(/^(?:gemini[ -]?pro[ -]?orchestrator[ -]?neon|orchestrator(?:\s*\((?:gemini[ -]?4[ -]?)?neon\)|[ -](?:gemini[ -]?4[ -]?)?neon))$/i);
+  if (orchestratorNeonMatch) {
+    effectiveModel = 'gemini-pro-orchestrator-neon';
   }
   const orchestratorMatch = effectiveModel.match(/^(?:gemini[ -]?pro[ -]?orchestrator[ -]?g1[ -]?pro|orchestrator(?:\s*\(argon\)|[ -]argon)?)$/i);
   if (orchestratorMatch) {
@@ -93,7 +103,11 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
 
   // AGY CLI rejects most Gemini/Claude models without --effort, while
   // fixed-effort models reject --effort.
-  const noEffortModels = new Set(['gpt-oss-120b-medium', 'gemini-pro-orchestrator-g1-pro']);
+  const noEffortModels = new Set([
+    'gpt-oss-120b-medium',
+    'gemini-pro-orchestrator-g1-pro',
+    'gemini-pro-orchestrator-neon',
+  ]);
   if (noEffortModels.has(effectiveModel)) {
     effectiveEffort = undefined;
   } else if (!effectiveEffort) {

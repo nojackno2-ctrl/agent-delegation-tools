@@ -62,7 +62,7 @@ export const delegateTaskSchema = z.object({
   agy_model: z
     .string()
     .optional()
-    .describe(`Model override for Antigravity. Default ${DEFAULT_MODELS.agy.model}; use gemini-4-argon, gemini-4-hydrogen, or gemini-pro-orchestrator-g1-pro for deep architecture/orchestration work.`),
+    .describe(`Model override for Antigravity. Default ${DEFAULT_MODELS.agy.model}; use gemini-4-neon, gemini-4-argon, gemini-4-hydrogen, gemini-pro-orchestrator-neon, or gemini-pro-orchestrator-g1-pro for deep architecture/orchestration work.`),
   agy_effort: z
     .enum(['low', 'medium', 'high', 'xhigh', 'max'])
     .optional()
@@ -221,7 +221,7 @@ export const delegateParallelSchema = z.object({
   agy_model: z
     .string()
     .optional()
-    .describe(`Model override for Antigravity. Default ${DEFAULT_MODELS.agy.model}; use gemini-4-argon, gemini-4-hydrogen, or gemini-pro-orchestrator-g1-pro for deep architecture/orchestration work.`),
+    .describe(`Model override for Antigravity. Default ${DEFAULT_MODELS.agy.model}; use gemini-4-neon, gemini-4-argon, gemini-4-hydrogen, gemini-pro-orchestrator-neon, or gemini-pro-orchestrator-g1-pro for deep architecture/orchestration work.`),
   agy_effort: z
     .enum(['low', 'medium', 'high', 'xhigh', 'max'])
     .optional()
