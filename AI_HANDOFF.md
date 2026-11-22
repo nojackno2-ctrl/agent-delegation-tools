@@ -1,5 +1,17 @@
 # AI handoff
 
+## 2026-11-23 Antigravity：Codex／Claude 最佳化與更新預設模型為 gpt-6.2-sol
+
+- 依本機最新模型目錄（`~/.codex/models_cache.json` 新增 `gpt-6.2-sol`、`gpt-6.2-astra`；`claude` 實測 `sonnet` 對應 `claude-sonnet-5-5`；`agy models` 維持最新）與強固需求進行最佳化：
+  - **預設模型更新**：將 Codex 預設模型由 `gpt-6.1-terra` 更新為 `gpt-6.2-sol`（effort 維持 `low`），同步更新 `mcp-server/src/core/defaults.ts`、`register.ts`、`codex.ps1`、`delegate.ps1`、`SKILL.md`、`CLAUDE.md`、`README.md` 與相關測試。
+  - `mcp-server/src/services/invokers/claude-invoker.ts`：修正 Exit 0 成功輸出若提及 `rate limit`／`login` 會被誤判為 Exit 10／78 的問題，改為僅在 `result.exitCode !== 0` 時分類，並共用 `quota-signals.ts` 的 `isQuotaExhausted`。
+  - `mcp-server/src/services/invokers/codex-invoker.ts`：於 `finally` 統一清理所有 `ensureAsciiDirectory`（含 `--add-dir` 的非 ASCII 路徑 junction）與暫存 `tempOutFile`，並將 `output` 納入非零退出的 `isQuotaExhausted` 檢查。
+  - `mcp-server/src/services/quota/codex-quota.ts`：改用 `resolveWindowsSpawnSpec` 支援 `.cmd`/`.bat` 啟動、補上 `stdin` `error` 監聽、於 `cleanup()` 統一關閉 `rl`／`timer`／`stdin`。
+  - `mcp-server/src/services/quota/claude-quota.ts`：將 `clearTimeout(timer)` 移至 `finally` 避免 `fetch()` 失敗時 timer 洩漏，並支援 `HOME`／`os.homedir()` 備援路徑。
+  - `mcp-server/src/core/process.ts`：`onStdout`／`onStderr` 串流回呼改用 `StringDecoder('utf8')`，避免多位元組 UTF-8 字元跨 chunk 邊界亂碼。
+  - 新增 `mcp-server/src/tests/quota-signals.test.ts` 測試：驗證 Claude Exit 0 引用 `rate limit`/`login` 維持 Exit 0，非零退出命中 `rate limit` 對應 Exit 10。
+- 驗證：`npm run lint`、`npm run build`、`npm test`（127/127 通過）、`tests/run-all.ps1`（9/9 通過）；`install.ps1` 已同步 4 份個人技能副本（SHA-256 驗證通過）。既有 MCP 連線需重連/重啟才會載入新 build。
+
 ## 2026-11-23 Antigravity：ACP 串流解碼、配額快取與模組共用最佳化
 
 - 針對 `mcp-server` 進行最佳化與強固改良：

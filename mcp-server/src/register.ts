@@ -24,7 +24,7 @@ export const tools = [
   {
     name: 'delegate_task',
     description:
-      'PREFERRED way to get work done: hand a task to an external subagent CLI instead of doing it in the parent agent. Auto-routes by task type and live quota (agy = Gemini 4 Hydrogen low, codex = GPT-6.1 Terra low), fails over when a provider is depleted, and runs write-capable by default so the subagent edits files under work_dir without any approval prompt.',
+      'PREFERRED way to get work done: hand a task to an external subagent CLI instead of doing it in the parent agent. Auto-routes by task type and live quota (agy = Gemini 4 Hydrogen low, codex = GPT-6.2-Sol low), fails over when a provider is depleted, and runs write-capable by default so the subagent edits files under work_dir without any approval prompt.',
     schema: delegateTaskSchema,
   },
   {
@@ -42,7 +42,7 @@ export const tools = [
   {
     name: 'invoke_codex',
     description:
-      'Directly invoke the OpenAI Codex CLI subagent. Defaults: gpt-6.1-terra, effort low, workspace-write sandbox with approvals auto-handled. Handles non-ASCII Windows paths via junction aliases.',
+      'Directly invoke the OpenAI Codex CLI subagent. Defaults: gpt-6.2-sol, effort low, workspace-write sandbox with approvals auto-handled. Handles non-ASCII Windows paths via junction aliases.',
     schema: invokeCodexSchema,
   },
   {

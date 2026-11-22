@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { isQuotaExhausted } from '../core/quota-signals.js';
 import { invokeCodex } from '../services/invokers/codex-invoker.js';
 import { invokeAgy } from '../services/invokers/agy-invoker.js';
+import { invokeClaude } from '../services/invokers/claude-invoker.js';
 import { makeFakeAcpCli } from './helpers/fake-acp.js';
 import { delegateTask } from '../services/dispatcher/delegate-service.js';
 import { clearExecutableCache } from '../core/executables.js';
@@ -62,6 +63,50 @@ test('Codex/AGY non-zero quota exits map to Exit 10 and fail over; zero exits ar
     }
     clearExecutableCache();
     clearQuotaCache();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Claude zero-exit quoting rate limit/login stays Exit 0; non-zero rate limit maps to Exit 10', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-signal-'));
+  const savedDepth = process.env.AGENT_DELEGATION_DEPTH;
+  try {
+    process.env.AGENT_DELEGATION_DEPTH = '0';
+    const script = path.join(dir, 'fake-claude.cjs');
+    fs.writeFileSync(
+      script,
+      [
+        "const mode = process.env.FAKE_CLAUDE_MODE || 'ok';",
+        "if (mode === 'ok') {",
+        "  process.stdout.write(JSON.stringify({ result: 'Reviewed rate limit and login checks.' }));",
+        '  process.exit(0);',
+        '} else {',
+        "  process.stderr.write('Error: You have reached your usage limit (rate limit)');",
+        '  process.exit(1);',
+        '}',
+      ].join('\n'),
+      'utf8'
+    );
+    const claudeBin = path.join(dir, process.platform === 'win32' ? 'claude.cmd' : 'claude');
+    fs.writeFileSync(
+      claudeBin,
+      process.platform === 'win32'
+        ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`
+        : `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`,
+      { mode: 0o755 }
+    );
+
+    process.env.FAKE_CLAUDE_MODE = 'ok';
+    const okRes = await invokeClaude({ prompt: 'review', workDir: dir, claudePath: claudeBin });
+    assert.equal(okRes.exitCode, EXIT_CODES.SUCCESS);
+
+    process.env.FAKE_CLAUDE_MODE = 'quota';
+    const quotaRes = await invokeClaude({ prompt: 'review', workDir: dir, claudePath: claudeBin });
+    assert.equal(quotaRes.exitCode, EXIT_CODES.QUOTA_EXCEEDED);
+  } finally {
+    delete process.env.FAKE_CLAUDE_MODE;
+    if (savedDepth === undefined) delete process.env.AGENT_DELEGATION_DEPTH;
+    else process.env.AGENT_DELEGATION_DEPTH = savedDepth;
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -119,7 +119,7 @@ try {
     $defaultCodex = Invoke-EncodedChild '& $env:TEST_WRAPPER -Agent codex -Sandbox read-only -CodexPath $env:TEST_CODEX -WorkDir $env:TEST_WORKDIR -SkipGitCheck -Prompt $env:TEST_PROMPT'
     Assert-Equal 0 $defaultCodex.ExitCode ('Default Codex dispatch failed: ' + ($defaultCodex.Output -join [Environment]::NewLine))
     $defaultCodexArguments = Read-RecordedArguments $codexArgsFile
-    Assert-Equal 'gpt-6.1-terra' $defaultCodexArguments[[Array]::IndexOf($defaultCodexArguments, '--model') + 1] 'Default Codex model must be GPT-6.1 Terra.'
+    Assert-Equal 'gpt-6.2-sol' $defaultCodexArguments[[Array]::IndexOf($defaultCodexArguments, '--model') + 1] 'Default Codex model must be GPT-6.2-Sol.'
     Assert-True ($defaultCodexArguments -contains 'model_reasoning_effort="low"') 'Default Codex effort must be low.'
 
     Clear-BackendEvidence $evidenceFiles

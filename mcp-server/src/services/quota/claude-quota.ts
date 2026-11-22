@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { AgentQuotaReport, QuotaWindow } from '../../core/types.js';
 
 export function parseClaudeUsageResponse(rawJson: string, observedAt: string): AgentQuotaReport {
@@ -87,10 +88,11 @@ export async function getClaudeQuota(options?: { timeoutSec?: number }): Promise
   }
 
   let credentialsPath: string | null = null;
+  const homeDir = process.env.USERPROFILE || process.env.HOME || os.homedir();
   if (process.env.CLAUDE_CONFIG_DIR) {
     credentialsPath = path.join(process.env.CLAUDE_CONFIG_DIR, '.credentials.json');
-  } else if (process.env.USERPROFILE) {
-    credentialsPath = path.join(process.env.USERPROFILE, '.claude', '.credentials.json');
+  } else if (homeDir) {
+    credentialsPath = path.join(homeDir, '.claude', '.credentials.json');
   }
 
   if (!credentialsPath || !fs.existsSync(credentialsPath)) {
@@ -128,10 +130,9 @@ export async function getClaudeQuota(options?: { timeoutSec?: number }): Promise
     };
   }
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutSec * 1000);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutSec * 1000);
-
     const response = await fetch('https://api.anthropic.com/api/oauth/usage', {
       method: 'GET',
       headers: {
@@ -143,7 +144,6 @@ export async function getClaudeQuota(options?: { timeoutSec?: number }): Promise
       },
       signal: controller.signal,
     });
-    clearTimeout(timer);
 
     const bodyText = await response.text();
     if (!response.ok) {
@@ -165,5 +165,7 @@ export async function getClaudeQuota(options?: { timeoutSec?: number }): Promise
       message: `Claude usage request failed: ${err.message}`,
       windows: [],
     };
+  } finally {
+    clearTimeout(timer);
   }
 }

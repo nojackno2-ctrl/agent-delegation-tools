@@ -1,7 +1,7 @@
 import { spawn, ChildProcess } from 'node:child_process';
 import * as readline from 'node:readline';
 import { resolveCodexExecutable } from '../../core/executables.js';
-import { killProcessTree } from '../../core/process.js';
+import { killProcessTree, resolveWindowsSpawnSpec } from '../../core/process.js';
 import { AgentQuotaReport, QuotaWindow } from '../../core/types.js';
 
 export async function getCodexQuota(options: {
@@ -26,9 +26,10 @@ export async function getCodexQuota(options: {
   }
 
   return new Promise<AgentQuotaReport>((resolve) => {
+    const launchSpec = resolveWindowsSpawnSpec(executable, ['app-server', '--listen', 'stdio://']);
     let child: ChildProcess;
     try {
-      child = spawn(executable, ['app-server', '--listen', 'stdio://'], {
+      child = spawn(launchSpec.executable, launchSpec.args, {
         cwd: options.workDir || process.cwd(),
         env: {
           ...process.env,
@@ -36,6 +37,7 @@ export async function getCodexQuota(options: {
         },
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
+        windowsVerbatimArguments: launchSpec.windowsVerbatimArguments,
       });
     } catch (err: any) {
       resolve({
@@ -49,14 +51,26 @@ export async function getCodexQuota(options: {
     }
 
     let isResolved = false;
+    let rl: readline.Interface | null = null;
+    let timer: NodeJS.Timeout | null = null;
     const cleanup = () => {
+      if (timer) {
+        timer = null;
+      }
+      if (rl) {
+        rl.close();
+        rl = null;
+      }
       if (!isResolved) {
         isResolved = true;
+        try { child.stdin?.end(); } catch { /* ignore */ }
         if (child.pid) killProcessTree(child.pid);
       }
     };
 
-    const timer = setTimeout(() => {
+    child.stdin?.on('error', () => { /* ignore early close */ });
+
+    timer = setTimeout(() => {
       cleanup();
       resolve({
         agent: 'codex',
@@ -67,7 +81,7 @@ export async function getCodexQuota(options: {
       });
     }, timeoutSec * 1000);
 
-    const rl = readline.createInterface({
+    rl = readline.createInterface({
       input: child.stdout!,
       crlfDelay: Infinity,
     });
@@ -79,7 +93,6 @@ export async function getCodexQuota(options: {
         if (msg.id === 0) {
           // Initialize response
           if (msg.error) {
-            clearTimeout(timer);
             cleanup();
             resolve({
               agent: 'codex',
@@ -94,7 +107,6 @@ export async function getCodexQuota(options: {
           child.stdin?.write(JSON.stringify({ method: 'initialized', params: {} }) + '\n');
           child.stdin?.write(JSON.stringify({ method: 'account/rateLimits/read', id: 1 }) + '\n');
         } else if (msg.id === 1) {
-          clearTimeout(timer);
           cleanup();
 
           if (msg.error) {
@@ -157,7 +169,6 @@ export async function getCodexQuota(options: {
     });
 
     child.on('error', (err) => {
-      clearTimeout(timer);
       cleanup();
       resolve({
         agent: 'codex',
@@ -169,7 +180,6 @@ export async function getCodexQuota(options: {
     });
 
     child.on('close', () => {
-      clearTimeout(timer);
       if (!isResolved) {
         isResolved = true;
         resolve({

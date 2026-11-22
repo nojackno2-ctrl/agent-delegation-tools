@@ -57,7 +57,8 @@ export async function invokeCodex(options: InvokeCodexOptions): Promise<Executio
   const effectiveEffort = options.effort || DEFAULT_MODELS.codex.effort;
 
   // Resolve ASCII directory via Junction if path contains non-ASCII characters
-  const dirResolution = ensureAsciiDirectory(targetDir);
+  const dirResolutions = [ensureAsciiDirectory(targetDir)];
+  const dirResolution = dirResolutions[0];
 
   const tempOutFile =
     options.outFile ||
@@ -92,22 +93,23 @@ export async function invokeCodex(options: InvokeCodexOptions): Promise<Executio
     args.push('--sandbox', sandbox);
   }
 
-  if (options.addDirs) {
-    for (const d of options.addDirs) {
-      if (d) {
-        const asciiAddDir = ensureAsciiDirectory(d);
-        args.push('--add-dir', asciiAddDir.effectivePath);
+  try {
+    if (options.addDirs) {
+      for (const d of options.addDirs) {
+        if (d) {
+          const asciiAddDir = ensureAsciiDirectory(d);
+          dirResolutions.push(asciiAddDir);
+          args.push('--add-dir', asciiAddDir.effectivePath);
+        }
       }
     }
-  }
 
-  // Pass prompt to exec
-  args.push(options.prompt);
+    // Pass prompt to exec
+    args.push(options.prompt);
 
-  // 0/undefined = no limit: long-running subagents are left to finish.
-  const timeoutMs = (options.timeoutSec ?? 0) * 1000;
+    // 0/undefined = no limit: long-running subagents are left to finish.
+    const timeoutMs = (options.timeoutSec ?? 0) * 1000;
 
-  try {
     const result = await spawnProcess({
       executable,
       args,
@@ -122,7 +124,6 @@ export async function invokeCodex(options: InvokeCodexOptions): Promise<Executio
     if (fs.existsSync(tempOutFile)) {
       try {
         output = fs.readFileSync(tempOutFile, 'utf8');
-        if (!options.outFile) fs.unlinkSync(tempOutFile);
       } catch {
         // ignore
       }
@@ -140,7 +141,7 @@ export async function invokeCodex(options: InvokeCodexOptions): Promise<Executio
     if (result.cancelled || result.timedOut) return { ...result, output: output.trim() };
 
     // Usage-limit exits must map to Exit 10 so the dispatcher marks Codex depleted and fails over.
-    if (result.exitCode !== 0 && isQuotaExhausted(result.stdout + '\n' + result.stderr)) {
+    if (result.exitCode !== 0 && isQuotaExhausted(result.stdout + '\n' + result.stderr + '\n' + output)) {
       return {
         ...result,
         exitCode: EXIT_CODES.QUOTA_EXCEEDED,
@@ -164,6 +165,15 @@ export async function invokeCodex(options: InvokeCodexOptions): Promise<Executio
       output: output.trim(),
     };
   } finally {
-    dirResolution.cleanup();
+    if (!options.outFile && fs.existsSync(tempOutFile)) {
+      try {
+        fs.unlinkSync(tempOutFile);
+      } catch {
+        // ignore
+      }
+    }
+    for (const res of dirResolutions) {
+      res.cleanup();
+    }
   }
 }

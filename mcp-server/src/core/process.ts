@@ -1,4 +1,5 @@
 import { spawn, ChildProcess } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import * as path from 'node:path';
 import { ExecutionResult, EXIT_CODES } from './types.js';
 
@@ -173,8 +174,10 @@ export async function spawnProcess(options: SpawnProcessOptions): Promise<Execut
       return;
     }
 
-    let stdoutChunks: Buffer[] = [];
-    let stderrChunks: Buffer[] = [];
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    const stdoutDecoder = options.onStdout ? new StringDecoder('utf8') : null;
+    const stderrDecoder = options.onStderr ? new StringDecoder('utf8') : null;
     let timedOut = false;
     let cancelled = false;
     const abort = () => {
@@ -202,14 +205,20 @@ export async function spawnProcess(options: SpawnProcessOptions): Promise<Execut
       child.stdin.end();
     }
 
-    child.stdout?.on('data', (chunk) => {
+    child.stdout?.on('data', (chunk: Buffer) => {
       stdoutChunks.push(Buffer.from(chunk));
-      if (options.onStdout) options.onStdout(chunk.toString('utf8'));
+      if (options.onStdout && stdoutDecoder) {
+        const text = stdoutDecoder.write(chunk);
+        if (text) options.onStdout(text);
+      }
     });
 
-    child.stderr?.on('data', (chunk) => {
+    child.stderr?.on('data', (chunk: Buffer) => {
       stderrChunks.push(Buffer.from(chunk));
-      if (options.onStderr) options.onStderr(chunk.toString('utf8'));
+      if (options.onStderr && stderrDecoder) {
+        const text = stderrDecoder.write(chunk);
+        if (text) options.onStderr(text);
+      }
     });
 
     child.on('error', (err) => {

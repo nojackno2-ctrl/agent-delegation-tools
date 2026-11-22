@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import { resolveClaudeExecutable } from '../../core/executables.js';
 import { spawnProcess } from '../../core/process.js';
 import { ExecutionResult, EXIT_CODES } from '../../core/types.js';
+import { isQuotaExhausted } from '../../core/quota-signals.js';
 import { DEFAULT_MODELS, DEFAULT_SANDBOX } from '../../core/defaults.js';
 
 export interface InvokeClaudeOptions {
@@ -109,8 +110,10 @@ export async function invokeClaude(options: InvokeClaudeOptions): Promise<Execut
 
   if (result.cancelled || result.timedOut) return { ...result, output: outputText.trim() };
 
-  // Quota and auth check
-  if (/usage limit reached|rate limit|exhausted|too many requests/i.test(result.stderr + result.stdout)) {
+  const combinedOutput = result.stderr + (result.stdout ? '\n' + result.stdout : '');
+
+  // Only reclassify non-zero exits so successful runs quoting these phrases stay Exit 0.
+  if (result.exitCode !== 0 && isQuotaExhausted(combinedOutput)) {
     return {
       ...result,
       exitCode: EXIT_CODES.QUOTA_EXCEEDED,
@@ -119,7 +122,7 @@ export async function invokeClaude(options: InvokeClaudeOptions): Promise<Execut
     };
   }
 
-  if (/login|sign in|auth required|not authenticated/i.test(result.stderr + result.stdout)) {
+  if (result.exitCode !== 0 && /login|sign in|auth required|not authenticated/i.test(combinedOutput)) {
     return {
       ...result,
       exitCode: EXIT_CODES.CONFIG_AUTH_ERROR,
