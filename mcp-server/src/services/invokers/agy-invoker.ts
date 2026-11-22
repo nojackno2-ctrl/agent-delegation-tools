@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { resolveAgyExecutable } from '../../core/executables.js';
-import { spawnProcess } from '../../core/process.js';
+import { runAcpPrompt } from '../../core/acp-client.js';
 import { ExecutionResult, EXIT_CODES } from '../../core/types.js';
 import { isQuotaExhausted } from '../../core/quota-signals.js';
 import { DEFAULT_MODELS } from '../../core/defaults.js';
@@ -21,8 +21,95 @@ export interface InvokeAgyOptions {
   skipPermissions?: boolean;
 }
 
+const NO_EFFORT_MODELS = new Set([
+  'gpt-oss-120b-medium',
+  'gemini-pro-orchestrator-g1-pro',
+  'gemini-pro-orchestrator-neon',
+]);
+
+export function normalizeAgyModelAndEffort(
+  model?: string,
+  effort?: InvokeAgyOptions['effort']
+): { model: string; effort?: InvokeAgyOptions['effort'] } {
+  let effectiveModel = (model || DEFAULT_MODELS.agy.model).trim();
+  let effectiveEffort = effort;
+
+  const thinkingMatch = effectiveModel.match(/^(.*?)-thinking$/i);
+  if (thinkingMatch) {
+    effectiveModel = thinkingMatch[1].trim();
+    if (!effectiveEffort) effectiveEffort = 'high';
+  }
+  const neonMatch = effectiveModel.match(/^(?:gemini[ -]?)?(4)[ -]?neon(?:\s*\((xhigh|high|medium|low)\)|[ -](xhigh|high|medium|low))?$/i);
+  if (neonMatch) {
+    effectiveModel = `gemini-${neonMatch[1]}-neon`;
+    const effortPart = neonMatch[2] || neonMatch[3];
+    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as InvokeAgyOptions['effort'];
+  }
+  const argonMatch = effectiveModel.match(/^(?:gemini[ -]?)?(4)[ -]?argon(?:\s*\((high|medium|low)\)|[ -](high|medium|low))?$/i);
+  if (argonMatch) {
+    effectiveModel = `gemini-${argonMatch[1]}-argon`;
+    const effortPart = argonMatch[2] || argonMatch[3];
+    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as InvokeAgyOptions['effort'];
+  }
+  const hydrogenMatch = effectiveModel.match(/^(?:gemini[ -]?)?(4)[ -]?hydrogen(?:\s*\((xhigh|high|medium|low)\)|[ -](xhigh|high|medium|low))?$/i);
+  if (hydrogenMatch) {
+    effectiveModel = `gemini-${hydrogenMatch[1]}-hydrogen`;
+    const effortPart = hydrogenMatch[2] || hydrogenMatch[3];
+    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as InvokeAgyOptions['effort'];
+  }
+  const orchestratorNeonMatch = effectiveModel.match(/^(?:gemini[ -]?pro[ -]?orchestrator[ -]?neon|orchestrator(?:\s*\((?:gemini[ -]?4[ -]?)?neon\)|[ -](?:gemini[ -]?4[ -]?)?neon))$/i);
+  if (orchestratorNeonMatch) {
+    effectiveModel = 'gemini-pro-orchestrator-neon';
+  }
+  const orchestratorMatch = effectiveModel.match(/^(?:gemini[ -]?pro[ -]?orchestrator[ -]?g1[ -]?pro|orchestrator(?:\s*\(argon\)|[ -]argon)?)$/i);
+  if (orchestratorMatch) {
+    effectiveModel = 'gemini-pro-orchestrator-g1-pro';
+  }
+  const flashMatch = effectiveModel.match(/^(?:gemini[ -]?)?(3\.[5-8])[ -]?flash(?:\s*\((high|medium|low)\)|[ -](high|medium|low))?$/i);
+  if (flashMatch) {
+    effectiveModel = `gemini-${flashMatch[1]}-flash`;
+    const effortPart = flashMatch[2] || flashMatch[3];
+    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as InvokeAgyOptions['effort'];
+  }
+  const proMatch = effectiveModel.match(/^(?:gemini[ -]?)?(3\.1)[ -]?pro(?:\s*\((high|low)\)|[ -](high|low))?$/i);
+  if (proMatch) {
+    effectiveModel = 'gemini-3.1-pro';
+    const effortPart = proMatch[2] || proMatch[3];
+    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as InvokeAgyOptions['effort'];
+  }
+  const claudeMatch = effectiveModel.match(/^(?:claude[ -]?)?(opus|sonnet)[ -]?(?:5\.5|5-5)(?:\s*\((high|medium|low)\)|[ -](high|medium|low))?$/i);
+  if (claudeMatch) {
+    effectiveModel = `claude-${claudeMatch[1].toLowerCase()}-5-5`;
+    const effortPart = claudeMatch[2] || claudeMatch[3];
+    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as InvokeAgyOptions['effort'];
+  }
+  const gptOssMatch = effectiveModel.match(/^gpt[ -]?oss[ -]?120b(?:\s*\(medium\)|[ -]medium)?$/i);
+  if (gptOssMatch) {
+    effectiveModel = 'gpt-oss-120b-medium';
+  }
+
+  if (NO_EFFORT_MODELS.has(effectiveModel)) {
+    effectiveEffort = undefined;
+  } else if (!effectiveEffort) {
+    effectiveEffort = DEFAULT_MODELS.agy.effort;
+  }
+
+  return { model: effectiveModel, effort: effectiveEffort };
+}
+
+export function resolveAgyAcpModelId(
+  model?: string,
+  effort?: InvokeAgyOptions['effort']
+): string {
+  const normalized = normalizeAgyModelAndEffort(model, effort);
+  if (!normalized.effort) return normalized.model;
+  return `${normalized.model}-${normalized.effort}`;
+}
+
 export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionResult> {
-  if (options.signal?.aborted) return { exitCode: EXIT_CODES.CANCELLED, stdout: '', stderr: 'Invocation cancelled.', durationMs: 0, cancelled: true };
+  if (options.signal?.aborted) {
+    return { exitCode: EXIT_CODES.CANCELLED, stdout: '', stderr: 'Invocation cancelled.', durationMs: 0, cancelled: true };
+  }
   options.onProgress?.('agy');
   let executable: string;
   try {
@@ -43,90 +130,9 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
         ? 'accept-edits'
         : options.mode || 'accept-edits';
 
-  let effectiveModel = (options.model || DEFAULT_MODELS.agy.model).trim();
-  let effectiveEffort = options.effort;
+  const acpModelId = resolveAgyAcpModelId(options.model, options.effort);
 
-  // Normalize model and effort aliases
-  const thinkingMatch = effectiveModel.match(/^(.*?)-thinking$/i);
-  if (thinkingMatch) {
-    effectiveModel = thinkingMatch[1].trim();
-    if (!effectiveEffort) effectiveEffort = 'high';
-  }
-  const neonMatch = effectiveModel.match(/^(?:gemini[ -]?)?(4)[ -]?neon(?:\s*\((xhigh|high|medium|low)\)|[ -](xhigh|high|medium|low))?$/i);
-  if (neonMatch) {
-    effectiveModel = `gemini-${neonMatch[1]}-neon`;
-    const effortPart = neonMatch[2] || neonMatch[3];
-    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as any;
-  }
-  const argonMatch = effectiveModel.match(/^(?:gemini[ -]?)?(4)[ -]?argon(?:\s*\((high|medium|low)\)|[ -](high|medium|low))?$/i);
-  if (argonMatch) {
-    effectiveModel = `gemini-${argonMatch[1]}-argon`;
-    const effortPart = argonMatch[2] || argonMatch[3];
-    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as any;
-  }
-  const hydrogenMatch = effectiveModel.match(/^(?:gemini[ -]?)?(4)[ -]?hydrogen(?:\s*\((xhigh|high|medium|low)\)|[ -](xhigh|high|medium|low))?$/i);
-  if (hydrogenMatch) {
-    effectiveModel = `gemini-${hydrogenMatch[1]}-hydrogen`;
-    const effortPart = hydrogenMatch[2] || hydrogenMatch[3];
-    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as any;
-  }
-  const orchestratorNeonMatch = effectiveModel.match(/^(?:gemini[ -]?pro[ -]?orchestrator[ -]?neon|orchestrator(?:\s*\((?:gemini[ -]?4[ -]?)?neon\)|[ -](?:gemini[ -]?4[ -]?)?neon))$/i);
-  if (orchestratorNeonMatch) {
-    effectiveModel = 'gemini-pro-orchestrator-neon';
-  }
-  const orchestratorMatch = effectiveModel.match(/^(?:gemini[ -]?pro[ -]?orchestrator[ -]?g1[ -]?pro|orchestrator(?:\s*\(argon\)|[ -]argon)?)$/i);
-  if (orchestratorMatch) {
-    effectiveModel = 'gemini-pro-orchestrator-g1-pro';
-  }
-  const flashMatch = effectiveModel.match(/^(?:gemini[ -]?)?(3\.[5-8])[ -]?flash(?:\s*\((high|medium|low)\)|[ -](high|medium|low))?$/i);
-  if (flashMatch) {
-    effectiveModel = `gemini-${flashMatch[1]}-flash`;
-    const effortPart = flashMatch[2] || flashMatch[3];
-    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as any;
-  }
-  const proMatch = effectiveModel.match(/^(?:gemini[ -]?)?(3\.1)[ -]?pro(?:\s*\((high|low)\)|[ -](high|low))?$/i);
-  if (proMatch) {
-    effectiveModel = 'gemini-3.1-pro';
-    const effortPart = proMatch[2] || proMatch[3];
-    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as any;
-  }
-  const claudeMatch = effectiveModel.match(/^(?:claude[ -]?)?(opus|sonnet)[ -]?(?:5\.5|5-5)(?:\s*\((high|medium|low)\)|[ -](high|medium|low))?$/i);
-  if (claudeMatch) {
-    effectiveModel = `claude-${claudeMatch[1].toLowerCase()}-5-5`;
-    const effortPart = claudeMatch[2] || claudeMatch[3];
-    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as any;
-  }
-  const gptOssMatch = effectiveModel.match(/^gpt[ -]?oss[ -]?120b(?:\s*\(medium\)|[ -]medium)?$/i);
-  if (gptOssMatch) {
-    effectiveModel = 'gpt-oss-120b-medium';
-  }
-
-  // AGY CLI rejects most Gemini/Claude models without --effort, while
-  // fixed-effort models reject --effort.
-  const noEffortModels = new Set([
-    'gpt-oss-120b-medium',
-    'gemini-pro-orchestrator-g1-pro',
-    'gemini-pro-orchestrator-neon',
-  ]);
-  if (noEffortModels.has(effectiveModel)) {
-    effectiveEffort = undefined;
-  } else if (!effectiveEffort) {
-    effectiveEffort = DEFAULT_MODELS.agy.effort;
-  }
-
-  const args: string[] = [
-    '-p',
-    options.prompt,
-    '--mode',
-    effectiveMode,
-    '--output-format',
-    'text',
-    '--print-timeout',
-    options.timeoutSec ? `${options.timeoutSec}s` : '0',
-  ];
-
-  if (effectiveModel) args.push('--model', effectiveModel);
-  if (effectiveEffort) args.push('--effort', effectiveEffort);
+  const args: string[] = ['acp', '--stdio'];
   // A headless child has no terminal to answer a permission prompt on, so a
   // prompt is a hang, not a safety net. Work stays bounded by workDir/addDirs.
   if (options.skipPermissions !== false) {
@@ -141,17 +147,18 @@ export async function invokeAgy(options: InvokeAgyOptions): Promise<ExecutionRes
     args.push('--add-dir', d);
   }
 
-  // 0/undefined = no limit: long-running subagents are left to finish. With a
-  // limit, AGY's own --print-timeout fires first so its output is flushed.
-  const timeoutMs = options.timeoutSec ? (options.timeoutSec + 30) * 1000 : 0;
-  const result = await spawnProcess({
+  const timeoutMs = options.timeoutSec ? options.timeoutSec * 1000 : 0;
+  const result = await runAcpPrompt({
     executable,
     args,
     cwd: workDir,
+    modelId: acpModelId,
+    modeId: effectiveMode,
+    prompt: options.prompt,
+    skipPermissions: options.skipPermissions,
     timeoutMs,
     signal: options.signal,
-    onStdout: () => options.onProgress?.('agy'),
-    onStderr: () => options.onProgress?.('agy'),
+    onProgress: () => options.onProgress?.('agy'),
   });
 
   const combinedOutput = result.stdout + (result.stderr ? '\n' + result.stderr : '');

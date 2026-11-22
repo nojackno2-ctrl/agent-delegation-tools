@@ -7,6 +7,7 @@ import { DEFAULT_MODELS, DEFAULT_SANDBOX, isExternalAgent, isWriteSandbox } from
 import { invokeAgySchema, invokeCodexSchema, invokeClaudeSchema } from '../tools/invokers.js';
 import { delegateTaskSchema, delegateParallelSchema } from '../tools/delegate.js';
 import { invokeAgy } from '../services/invokers/agy-invoker.js';
+import { makeFakeAcpCli } from './helpers/fake-acp.js';
 
 describe('Delegation defaults policy', () => {
   describe('Configured models', () => {
@@ -88,19 +89,7 @@ describe('Delegation defaults policy', () => {
 
     it('should normalize Gemini 4 Argon and Gemini 3.8 Flash aliases in invokeAgy', async () => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-norm-test-'));
-      const script = path.join(tempDir, 'fake-agy.cjs');
-      fs.writeFileSync(
-        script,
-        `process.stdout.write(JSON.stringify(process.argv.slice(2))); process.exit(0);`
-      );
-      const agyCmd = path.join(tempDir, process.platform === 'win32' ? 'agy.cmd' : 'agy');
-      fs.writeFileSync(
-        agyCmd,
-        process.platform === 'win32'
-          ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`
-          : `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`,
-        { mode: 0o755 }
-      );
+      const agyCmd = makeFakeAcpCli(tempDir, { echoState: true });
 
       try {
         const res1 = await invokeAgy({
@@ -110,9 +99,9 @@ describe('Delegation defaults policy', () => {
           agyPath: agyCmd,
         });
         assert.equal(res1.exitCode, 0);
-        const args1 = JSON.parse(res1.stdout) as string[];
-        assert.equal(args1[args1.indexOf('--model') + 1], 'gemini-4-argon');
-        assert.equal(args1[args1.indexOf('--effort') + 1], 'high');
+        const state1 = JSON.parse(res1.stdout);
+        assert.equal(state1.argv[0], 'acp');
+        assert.equal(state1.modelId, 'gemini-4-argon-high');
 
         const res2 = await invokeAgy({
           prompt: 'test',
@@ -121,9 +110,8 @@ describe('Delegation defaults policy', () => {
           agyPath: agyCmd,
         });
         assert.equal(res2.exitCode, 0);
-        const args2 = JSON.parse(res2.stdout) as string[];
-        assert.equal(args2[args2.indexOf('--model') + 1], 'gemini-4-argon');
-        assert.equal(args2[args2.indexOf('--effort') + 1], 'low');
+        const state2 = JSON.parse(res2.stdout);
+        assert.equal(state2.modelId, 'gemini-4-argon-low');
 
         const res3 = await invokeAgy({
           prompt: 'test',
@@ -132,15 +120,13 @@ describe('Delegation defaults policy', () => {
           agyPath: agyCmd,
         });
         assert.equal(res3.exitCode, 0);
-        const args3 = JSON.parse(res3.stdout) as string[];
-        assert.equal(args3[args3.indexOf('--model') + 1], 'gemini-4-argon');
-        assert.equal(args3[args3.indexOf('--effort') + 1], 'low');
+        const state3 = JSON.parse(res3.stdout);
+        assert.equal(state3.modelId, 'gemini-4-argon-low');
 
         const fixed = await invokeAgy({ prompt: 'test', model: 'gpt-oss-120b-medium', effort: 'high', workDir: tempDir, agyPath: agyCmd });
         assert.equal(fixed.exitCode, 0);
-        const fixedArgs = JSON.parse(fixed.stdout) as string[];
-        assert.equal(fixedArgs[fixedArgs.indexOf('--model') + 1], 'gpt-oss-120b-medium');
-        assert.equal(fixedArgs.includes('--effort'), false);
+        const fixedState = JSON.parse(fixed.stdout);
+        assert.equal(fixedState.modelId, 'gpt-oss-120b-medium');
 
         const hydroHuman = await invokeAgy({
           prompt: 'test',
@@ -149,9 +135,8 @@ describe('Delegation defaults policy', () => {
           agyPath: agyCmd,
         });
         assert.equal(hydroHuman.exitCode, 0);
-        const hydroHumanArgs = JSON.parse(hydroHuman.stdout) as string[];
-        assert.equal(hydroHumanArgs[hydroHumanArgs.indexOf('--model') + 1], 'gemini-4-hydrogen');
-        assert.equal(hydroHumanArgs[hydroHumanArgs.indexOf('--effort') + 1], 'xhigh');
+        const hydroHumanState = JSON.parse(hydroHuman.stdout);
+        assert.equal(hydroHumanState.modelId, 'gemini-4-hydrogen-xhigh');
 
         const hydroAuto = await invokeAgy({
           prompt: 'test',
@@ -160,9 +145,8 @@ describe('Delegation defaults policy', () => {
           agyPath: agyCmd,
         });
         assert.equal(hydroAuto.exitCode, 0);
-        const hydroAutoArgs = JSON.parse(hydroAuto.stdout) as string[];
-        assert.equal(hydroAutoArgs[hydroAutoArgs.indexOf('--model') + 1], 'gemini-4-hydrogen');
-        assert.equal(hydroAutoArgs[hydroAutoArgs.indexOf('--effort') + 1], 'low');
+        const hydroAutoState = JSON.parse(hydroAuto.stdout);
+        assert.equal(hydroAutoState.modelId, 'gemini-4-hydrogen-low');
 
         const orch = await invokeAgy({
           prompt: 'test',
@@ -172,9 +156,8 @@ describe('Delegation defaults policy', () => {
           agyPath: agyCmd,
         });
         assert.equal(orch.exitCode, 0);
-        const orchArgs = JSON.parse(orch.stdout) as string[];
-        assert.equal(orchArgs[orchArgs.indexOf('--model') + 1], 'gemini-pro-orchestrator-g1-pro');
-        assert.equal(orchArgs.includes('--effort'), false);
+        const orchState = JSON.parse(orch.stdout);
+        assert.equal(orchState.modelId, 'gemini-pro-orchestrator-g1-pro');
 
         const neonHuman = await invokeAgy({
           prompt: 'test',
@@ -183,9 +166,8 @@ describe('Delegation defaults policy', () => {
           agyPath: agyCmd,
         });
         assert.equal(neonHuman.exitCode, 0);
-        const neonHumanArgs = JSON.parse(neonHuman.stdout) as string[];
-        assert.equal(neonHumanArgs[neonHumanArgs.indexOf('--model') + 1], 'gemini-4-neon');
-        assert.equal(neonHumanArgs[neonHumanArgs.indexOf('--effort') + 1], 'xhigh');
+        const neonHumanState = JSON.parse(neonHuman.stdout);
+        assert.equal(neonHumanState.modelId, 'gemini-4-neon-xhigh');
 
         const neonAuto = await invokeAgy({
           prompt: 'test',
@@ -194,9 +176,8 @@ describe('Delegation defaults policy', () => {
           agyPath: agyCmd,
         });
         assert.equal(neonAuto.exitCode, 0);
-        const neonAutoArgs = JSON.parse(neonAuto.stdout) as string[];
-        assert.equal(neonAutoArgs[neonAutoArgs.indexOf('--model') + 1], 'gemini-4-neon');
-        assert.equal(neonAutoArgs[neonAutoArgs.indexOf('--effort') + 1], 'low');
+        const neonAutoState = JSON.parse(neonAuto.stdout);
+        assert.equal(neonAutoState.modelId, 'gemini-4-neon-low');
 
         const orchNeon = await invokeAgy({
           prompt: 'test',
@@ -206,9 +187,8 @@ describe('Delegation defaults policy', () => {
           agyPath: agyCmd,
         });
         assert.equal(orchNeon.exitCode, 0);
-        const orchNeonArgs = JSON.parse(orchNeon.stdout) as string[];
-        assert.equal(orchNeonArgs[orchNeonArgs.indexOf('--model') + 1], 'gemini-pro-orchestrator-neon');
-        assert.equal(orchNeonArgs.includes('--effort'), false);
+        const orchNeonState = JSON.parse(orchNeon.stdout);
+        assert.equal(orchNeonState.modelId, 'gemini-pro-orchestrator-neon');
       } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
       }

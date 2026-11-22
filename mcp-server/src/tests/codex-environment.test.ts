@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { invokeCodex, isCodexEnvironmentFailure } from '../services/invokers/codex-invoker.js';
 import { invokeAgy } from '../services/invokers/agy-invoker.js';
+import { makeFakeAcpCli } from './helpers/fake-acp.js';
 import { delegateTask } from '../services/dispatcher/delegate-service.js';
 import { delegateParallel } from '../services/dispatcher/parallel-service.js';
 import { clearExecutableCache } from '../core/executables.js';
@@ -28,7 +29,7 @@ test('Codex fake zero exit startup failures fail over without quota depletion', 
   const oldDepth = process.env.AGENT_DELEGATION_DEPTH;
   try {
     const codex = fakeCli(dir, 'codex', 'Failed to create unified exec process: helper_unknown_error: setup refresh had errors');
-    const agy = fakeCli(dir, 'agy', 'fallback success');
+    const agy = makeFakeAcpCli(dir, { name: 'agy', output: 'fallback success' });
     process.env.CODEX_CLI_PATH = codex;
     process.env.AGENT_DELEGATION_DEPTH = '0';
     process.env.AGY_CLI_PATH = agy;
@@ -99,14 +100,11 @@ test('agy invoker registers work_dir as the first --add-dir workspace', async ()
   const oldDepth = process.env.AGENT_DELEGATION_DEPTH;
   try {
     process.env.AGENT_DELEGATION_DEPTH = '0';
-    const script = path.join(dir, 'echo-args.cjs');
-    fs.writeFileSync(script, 'console.log(JSON.stringify(process.argv.slice(2)));');
-    const agy = path.join(dir, process.platform === 'win32' ? 'agy.cmd' : 'agy');
-    fs.writeFileSync(agy, process.platform === 'win32'
-      ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\nexit /b 0\r\n`
-      : `#!/bin/sh\n"${process.execPath}" "${script}" "$@"\n`, { mode: 0o755 });
+    const agy = makeFakeAcpCli(dir, { echoState: true });
     const result = await invokeAgy({ prompt: 'fake only', agyPath: agy, workDir: dir, addDirs: [extra, dir] });
-    const args: string[] = JSON.parse(result.stdout.trim().split(/\r?\n/).pop() ?? '[]');
+    assert.equal(result.exitCode, 0);
+    const state = JSON.parse(result.stdout);
+    const args: string[] = state.argv;
     const addDirs = args.flatMap((arg, i) => (arg === '--add-dir' ? [args[i + 1]] : []));
     assert.deepEqual(addDirs, [path.resolve(dir), path.resolve(extra)]);
   } finally {

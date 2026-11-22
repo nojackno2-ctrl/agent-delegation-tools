@@ -1,5 +1,13 @@
 # AI handoff
 
+## 2026-11-23 Antigravity：AGY 呼叫改用 ACP（Agent Client Protocol）
+
+- 依使用者要求將 `mcp-server` 的 AGY 呼叫方式從單次 `agy -p` 改為 `agy acp --stdio`（JSON-RPC over stdio）：
+  - 新增 `mcp-server/src/core/acp-client.ts`（`runAcpPrompt`）：實作 ACP 交握（`initialize` -> `session/new` -> `session/set_model` -> `session/set_mode` -> `session/prompt`）、`session/update`（`agent_message_chunk` 串流收集與進度回呼）、`session/request_permission` 自動授權/拒絕、`AbortSignal`/逾時時發送 `session/cancel` 並樹狀清理程序，以及未完成 prompt 即提前結束的失敗偵測。
+  - 更新 `mcp-server/src/services/invokers/agy-invoker.ts`：抽出 `normalizeAgyModelAndEffort` 與 `resolveAgyAcpModelId`，將模型與思考程度映射為 ACP `modelId`（如 `gemini-4-hydrogen-low`、`gemini-pro-orchestrator-neon`），保留 `--dangerously-skip-permissions`、`--add-dir`、額度耗盡（Exit 10）與登入失敗（Exit 78）偵測；PowerShell wrapper（`agy.ps1`）維持單次 CLI 呼叫未改。
+  - 新增 `mcp-server/src/tests/helpers/fake-acp.ts` 與 `mcp-server/src/tests/acp-client.test.ts`，並更新 `defaults.test.ts`、`codex-environment.test.ts`、`hardening.test.ts`、`quota-signals.test.ts` 中的 fake AGY 模擬。
+- 驗證：`npm run lint`、build、`npm test`（123/123 通過，含 5 個 ACP 單元測試）通過；實機 `invokeAgy` 呼叫 `agy acp`（`gemini-4-hydrogen` / `low` / `read-only`）回傳 `LIVE_ACP_OK`（exit 0，耗時 3905ms）；`tests/run-all.ps1` 9/9 通過。既有 MCP 連線需重連/重啟才會載入新 build。
+
 ## 2026-11-21 Antigravity：更新 AGY 可呼叫模型（Gemini 4 Neon 與 Orchestrator (Neon)）
 
 - 依 `agy models`（23 個模型/程度組合）新增 `gemini-4-neon`（支援 `low`/`medium`/`high`/`xhigh`）與 `gemini-pro-orchestrator-neon`（`Orchestrator (Neon)`）正規化；保留 `gemini-4-hydrogen`（effort `low`）為 AGY 預設模型。

@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { isQuotaExhausted } from '../core/quota-signals.js';
 import { invokeCodex } from '../services/invokers/codex-invoker.js';
 import { invokeAgy } from '../services/invokers/agy-invoker.js';
+import { makeFakeAcpCli } from './helpers/fake-acp.js';
 import { delegateTask } from '../services/dispatcher/delegate-service.js';
 import { clearExecutableCache } from '../core/executables.js';
 import { EXIT_CODES } from '../core/types.js';
@@ -46,7 +47,7 @@ test('Codex/AGY non-zero quota exits map to Exit 10 and fail over; zero exits ar
     assert.equal((await invokeCodex({ prompt: 'fake only', codexPath: quoting, workDir: dir })).exitCode, EXIT_CODES.SUCCESS);
 
     process.env.CODEX_CLI_PATH = codex;
-    process.env.AGY_CLI_PATH = fakeCli(dir, 'agy', 'fallback success', 0);
+    process.env.AGY_CLI_PATH = makeFakeAcpCli(dir, { name: 'agy', output: 'fallback success' });
     process.env.AGENT_DELEGATION_DEPTH = '0';
     clearExecutableCache();
     clearQuotaCache();

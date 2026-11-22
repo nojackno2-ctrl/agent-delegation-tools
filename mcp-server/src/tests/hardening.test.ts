@@ -14,6 +14,7 @@ import { handleInvokeAgy, handleInvokeCodex, handleInvokeClaude } from '../tools
 import { JobRegistry } from '../services/jobs/job-registry.js';
 import { validateWorkDir } from '../utils/validation.js';
 import { capOutputTail } from '../core/logging.js';
+import { makeFakeAcpCli } from './helpers/fake-acp.js';
 
 function makeFakeCli(dir: string, name: string, options: { stdout?: string; stderr?: string; exitCode?: number }): string {
   const script = path.join(dir, `${name}.cjs`);
@@ -117,7 +118,7 @@ describe('MCP Server Hardening Specification', () => {
       // First attempt on codex fails with exit 10 (QUOTA_EXCEEDED) and stderr
       const codex = makeFakeCli(dir, 'codex', { stderr: 'Quota exceeded for codex account', exitCode: 10 });
       // Failover attempt on agy succeeds
-      const agy = makeFakeCli(dir, 'agy', { stdout: 'Final answer from agy subagent', exitCode: 0 });
+      const agy = makeFakeAcpCli(dir, { name: 'agy', output: 'Final answer from agy subagent' });
 
       process.env.CODEX_CLI_PATH = codex;
       process.env.AGY_CLI_PATH = agy;
@@ -187,7 +188,7 @@ describe('MCP Server Hardening Specification', () => {
       process.env.AGENT_DELEGATION_DEPTH = '0';
       process.env.FAKE_AGY_CLI_USAGE_OUTPUT = 'Gemini Models Weekly Limit Remaining 85% 2026-10-10T00:00:00Z\nGemini Models Five Hour Limit Remaining 85% 2026-10-04T05:00:00Z';
       const codex = makeFakeCli(dir, 'codex', { stderr: 'Auth token expired or config invalid', exitCode: 78 });
-      const agy = makeFakeCli(dir, 'agy', { stdout: 'Agy success', exitCode: 0 });
+      const agy = makeFakeAcpCli(dir, { name: 'agy', output: 'Agy success' });
 
       process.env.CODEX_CLI_PATH = codex;
       process.env.AGY_CLI_PATH = agy;
@@ -279,7 +280,7 @@ describe('MCP Server Hardening Specification', () => {
 
     try {
       process.env.AGENT_DELEGATION_DEPTH = '0';
-      const agy = makeFakeCli(dir, 'agy', { stdout: 'Parallel worker output', exitCode: 0 });
+      const agy = makeFakeAcpCli(dir, { name: 'agy', output: 'Parallel worker output' });
       process.env.AGY_CLI_PATH = agy;
       clearExecutableCache();
 
