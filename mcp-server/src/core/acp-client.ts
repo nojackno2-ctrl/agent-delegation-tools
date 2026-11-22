@@ -1,5 +1,6 @@
 import { spawn, ChildProcess } from 'node:child_process';
-import { formatWindowsArgument, killProcessTree } from './process.js';
+import { StringDecoder } from 'node:string_decoder';
+import { killProcessTree, resolveWindowsSpawnSpec } from './process.js';
 import { ExecutionResult, EXIT_CODES } from './types.js';
 
 export interface AcpPromptOptions {
@@ -74,21 +75,12 @@ export async function runAcpPrompt(options: AcpPromptOptions): Promise<Execution
     };
   }
 
-  const isCmdOrBat = /\.(cmd|bat)$/i.test(options.executable);
-  let launchExecutable = options.executable;
-  let launchArgs = options.args;
-
-  if (isCmdOrBat && process.platform === 'win32') {
-    const comSpec = process.env.ComSpec || 'cmd.exe';
-    launchExecutable = comSpec;
-    const innerArgs = [options.executable, ...options.args].map(formatWindowsArgument).join(' ');
-    launchArgs = ['/d', '/s', '/c', `"${innerArgs}"`];
-  }
+  const launchSpec = resolveWindowsSpawnSpec(options.executable, options.args);
 
   return new Promise<ExecutionResult>((resolve) => {
     let child: ChildProcess;
     try {
-      child = spawn(launchExecutable, launchArgs, {
+      child = spawn(launchSpec.executable, launchSpec.args, {
         cwd: options.cwd || process.cwd(),
         env: {
           ...process.env,
@@ -98,7 +90,7 @@ export async function runAcpPrompt(options: AcpPromptOptions): Promise<Execution
         },
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
-        windowsVerbatimArguments: isCmdOrBat && process.platform === 'win32',
+        windowsVerbatimArguments: launchSpec.windowsVerbatimArguments,
         detached: process.platform !== 'win32',
       });
     } catch (err: any) {
@@ -118,6 +110,7 @@ export async function runAcpPrompt(options: AcpPromptOptions): Promise<Execution
     let sessionId: string | undefined;
     let nextId = 1;
     let stdoutBuf = '';
+    const stdoutDecoder = new StringDecoder('utf8');
 
     const assistantChunks: string[] = [];
     const rawStdoutLines: string[] = [];
@@ -162,9 +155,7 @@ export async function runAcpPrompt(options: AcpPromptOptions): Promise<Execution
       }, delayMs);
     };
 
-    const abort = () => {
-      if (timedOut || cancelled || settled) return;
-      cancelled = true;
+    const beginTeardown = (reason: string) => {
       if (sessionId) {
         sendJsonRpc({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId } });
       }
@@ -173,8 +164,14 @@ export async function runAcpPrompt(options: AcpPromptOptions): Promise<Execution
       } catch {
         // ignore
       }
-      rejectAllPending(new Error('ACP invocation cancelled.'));
+      rejectAllPending(new Error(reason));
       scheduleForceKill(500);
+    };
+
+    const abort = () => {
+      if (timedOut || cancelled || settled) return;
+      cancelled = true;
+      beginTeardown('ACP invocation cancelled.');
     };
 
     options.signal?.addEventListener('abort', abort, { once: true });
@@ -184,16 +181,7 @@ export async function runAcpPrompt(options: AcpPromptOptions): Promise<Execution
       timeoutTimer = setTimeout(() => {
         if (cancelled || settled) return;
         timedOut = true;
-        if (sessionId) {
-          sendJsonRpc({ jsonrpc: '2.0', method: 'session/cancel', params: { sessionId } });
-        }
-        try {
-          child.stdin?.end();
-        } catch {
-          // ignore
-        }
-        rejectAllPending(new Error(`ACP invocation timed out after ${options.timeoutMs}ms.`));
-        scheduleForceKill(500);
+        beginTeardown(`ACP invocation timed out after ${options.timeoutMs}ms.`);
       }, options.timeoutMs);
     }
 
@@ -259,12 +247,11 @@ export async function runAcpPrompt(options: AcpPromptOptions): Promise<Execution
       }
     };
 
-    child.stdout?.on('data', (chunk) => {
-      stdoutBuf += chunk.toString('utf8');
-      let idx: number;
-      while ((idx = stdoutBuf.indexOf('\n')) >= 0) {
-        const line = stdoutBuf.slice(0, idx);
-        stdoutBuf = stdoutBuf.slice(idx + 1);
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdoutBuf += stdoutDecoder.write(chunk);
+      const lines = stdoutBuf.split('\n');
+      stdoutBuf = lines.pop() ?? '';
+      for (const line of lines) {
         handleLine(line);
       }
     });
@@ -283,6 +270,7 @@ export async function runAcpPrompt(options: AcpPromptOptions): Promise<Execution
       if (killGraceTimer) clearTimeout(killGraceTimer);
       options.signal?.removeEventListener('abort', abort);
 
+      stdoutBuf += stdoutDecoder.end();
       if (stdoutBuf.trim()) {
         handleLine(stdoutBuf);
         stdoutBuf = '';

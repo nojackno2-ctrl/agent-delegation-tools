@@ -64,6 +64,30 @@ export function formatWindowsArgument(val: string): string {
   return `"${escaped}"`;
 }
 
+export interface WindowsSpawnSpec {
+  executable: string;
+  args: string[];
+  windowsVerbatimArguments: boolean;
+}
+
+export function resolveWindowsSpawnSpec(executable: string, args: string[]): WindowsSpawnSpec {
+  const isCmdOrBat = /\.(cmd|bat)$/i.test(executable);
+  if (isCmdOrBat && process.platform === 'win32') {
+    const comSpec = process.env.ComSpec || 'cmd.exe';
+    const innerArgs = [executable, ...args].map(formatWindowsArgument).join(' ');
+    return {
+      executable: comSpec,
+      args: ['/d', '/s', '/c', `"${innerArgs}"`],
+      windowsVerbatimArguments: true,
+    };
+  }
+  return {
+    executable,
+    args,
+    windowsVerbatimArguments: false,
+  };
+}
+
 export function killProcessTree(pid: number): void {
   if (!pid) return;
   try {
@@ -121,21 +145,12 @@ export async function spawnProcess(options: SpawnProcessOptions): Promise<Execut
     };
   }
 
-  const isCmdOrBat = /\.(cmd|bat)$/i.test(options.executable);
-  let launchExecutable = options.executable;
-  let launchArgs = options.args;
-
-  if (isCmdOrBat && process.platform === 'win32') {
-    const comSpec = process.env.ComSpec || 'cmd.exe';
-    launchExecutable = comSpec;
-    const innerArgs = [options.executable, ...options.args].map(formatWindowsArgument).join(' ');
-    launchArgs = ['/d', '/s', '/c', `"${innerArgs}"`];
-  }
+  const launchSpec = resolveWindowsSpawnSpec(options.executable, options.args);
 
   return new Promise<ExecutionResult>((resolve) => {
     let child: ChildProcess;
     try {
-      child = spawn(launchExecutable, launchArgs, {
+      child = spawn(launchSpec.executable, launchSpec.args, {
         cwd: options.cwd || process.cwd(),
         env: {
           ...process.env,
@@ -145,7 +160,7 @@ export async function spawnProcess(options: SpawnProcessOptions): Promise<Execut
         },
         stdio: [options.stdinString !== undefined ? 'pipe' : 'ignore', 'pipe', 'pipe'],
         windowsHide: true,
-        windowsVerbatimArguments: isCmdOrBat && process.platform === 'win32',
+        windowsVerbatimArguments: launchSpec.windowsVerbatimArguments,
         detached: process.platform !== 'win32',
       });
     } catch (err: any) {

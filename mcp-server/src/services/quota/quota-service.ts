@@ -16,41 +16,31 @@ interface QuotaCacheEntry {
 }
 
 const quotaCache = new Map<AgentName, QuotaCacheEntry>();
+const inFlightQueries = new Map<AgentName, Promise<AgentQuotaReport>>();
+const cacheEpochs = new Map<AgentName, number>();
 const DEFAULT_QUOTA_CACHE_TTL_MS = 10_000; // 10 seconds
+
+function bumpEpoch(agent: AgentName): number {
+  const next = (cacheEpochs.get(agent) ?? 0) + 1;
+  cacheEpochs.set(agent, next);
+  return next;
+}
 
 export function clearQuotaCache(): void {
   quotaCache.clear();
-}
-
-export function markProviderDepleted(agent: AgentName): void {
-  const existing = quotaCache.get(agent);
-  if (existing) {
-    existing.report.availability = 'depleted';
-    if (existing.report.windows) {
-      for (const w of existing.report.windows) {
-        w.remainingPercent = 0;
-        w.usedPercent = 100;
-      }
-    }
-  } else {
-    quotaCache.set(agent, {
-      report: {
-        agent,
-        availability: 'depleted',
-        observedAt: new Date().toISOString(),
-        message: 'Provider quota limit reached during execution.',
-        windows: [{ name: agent, remainingPercent: 0, usedPercent: 100 }],
-      },
-      timestamp: Date.now(),
-    });
+  inFlightQueries.clear();
+  for (const agent of ['codex', 'claude', 'agy'] as AgentName[]) {
+    bumpEpoch(agent);
   }
 }
 
-export function markProviderUnavailable(
+function markProviderState(
   agent: AgentName,
-  availability: 'unavailable' | 'logged_out' = 'unavailable',
-  message = 'Provider configuration or authentication error.'
+  availability: 'depleted' | 'unavailable' | 'logged_out',
+  message: string
 ): void {
+  bumpEpoch(agent);
+  const now = Date.now();
   const existing = quotaCache.get(agent);
   if (existing) {
     existing.report.availability = availability;
@@ -61,19 +51,31 @@ export function markProviderUnavailable(
         w.usedPercent = 100;
       }
     }
-    existing.timestamp = Date.now();
+    existing.timestamp = now;
   } else {
     quotaCache.set(agent, {
       report: {
         agent,
         availability,
-        observedAt: new Date().toISOString(),
+        observedAt: new Date(now).toISOString(),
         message,
         windows: [{ name: agent, remainingPercent: 0, usedPercent: 100 }],
       },
-      timestamp: Date.now(),
+      timestamp: now,
     });
   }
+}
+
+export function markProviderDepleted(agent: AgentName): void {
+  markProviderState(agent, 'depleted', 'Provider quota limit reached during execution.');
+}
+
+export function markProviderUnavailable(
+  agent: AgentName,
+  availability: 'unavailable' | 'logged_out' = 'unavailable',
+  message = 'Provider configuration or authentication error.'
+): void {
+  markProviderState(agent, availability, message);
 }
 
 export interface QuotaQueryOptions {
@@ -96,29 +98,50 @@ export async function getAgentQuota(
     if (cached && Date.now() - cached.timestamp < ttl) {
       return cached.report;
     }
+    const inflight = inFlightQueries.get(agent);
+    if (inflight) {
+      return await inflight;
+    }
   }
 
-  let report: AgentQuotaReport;
-  switch (agent) {
-    case 'codex':
-      report = await getCodexQuota({
-        codexPath: options?.codexPath,
-        timeoutSec: options?.timeoutSec,
-        workDir: options?.workDir,
-      });
-      break;
-    case 'claude':
-      report = await getClaudeQuota({ timeoutSec: options?.timeoutSec });
-      break;
-    case 'agy':
-      report = await getAgyQuota({ timeoutSec: options?.timeoutSec });
-      break;
-    default:
-      throw new Error(`Unsupported agent: ${agent}`);
+  const startEpoch = cacheEpochs.get(agent) ?? 0;
+  const queryPromise = (async () => {
+    let report: AgentQuotaReport;
+    switch (agent) {
+      case 'codex':
+        report = await getCodexQuota({
+          codexPath: options?.codexPath,
+          timeoutSec: options?.timeoutSec,
+          workDir: options?.workDir,
+        });
+        break;
+      case 'claude':
+        report = await getClaudeQuota({ timeoutSec: options?.timeoutSec });
+        break;
+      case 'agy':
+        report = await getAgyQuota({ timeoutSec: options?.timeoutSec });
+        break;
+      default:
+        throw new Error(`Unsupported agent: ${agent}`);
+    }
+
+    if ((cacheEpochs.get(agent) ?? 0) === startEpoch) {
+      quotaCache.set(agent, { report, timestamp: Date.now() });
+    }
+    return report;
+  })();
+
+  if (!bypass) {
+    inFlightQueries.set(agent, queryPromise);
   }
 
-  quotaCache.set(agent, { report, timestamp: Date.now() });
-  return report;
+  try {
+    return await queryPromise;
+  } finally {
+    if (inFlightQueries.get(agent) === queryPromise) {
+      inFlightQueries.delete(agent);
+    }
+  }
 }
 
 export async function getAllQuotas(options?: QuotaQueryOptions): Promise<AgentQuotaReport[]> {

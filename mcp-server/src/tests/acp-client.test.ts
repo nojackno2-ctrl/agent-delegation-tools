@@ -155,4 +155,66 @@ describe('AGY ACP Client', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('decodes multi-byte UTF-8 JSON-RPC lines split across stdout chunks without corruption', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'acp-utf8-split-test-'));
+    const oldDepth = process.env.AGENT_DELEGATION_DEPTH;
+    try {
+      process.env.AGENT_DELEGATION_DEPTH = '0';
+      const script = path.join(dir, 'utf8-split.cjs');
+      fs.writeFileSync(
+        script,
+        [
+          "let buf = '';",
+          "process.stdin.on('data', (d) => {",
+          "  buf += d.toString('utf8');",
+          "  const lines = buf.split(/\\r?\\n/);",
+          "  buf = lines.pop() || '';",
+          "  for (const line of lines) {",
+          "    if (!line.trim()) continue;",
+          "    const msg = JSON.parse(line);",
+          "    if (msg.method === 'initialize') {",
+          "      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1 } }) + '\\n');",
+          "    } else if (msg.method === 'session/new') {",
+          "      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 's1' } }) + '\\n');",
+          "    } else if (msg.method === 'session/set_model' || msg.method === 'session/set_mode') {",
+          "      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }) + '\\n');",
+          "    } else if (msg.method === 'session/prompt') {",
+          "      const payload = Buffer.from(JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 's1', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '繁體中文測試🚀' } } } }) + '\\n', 'utf8');",
+          "      const splitAt = payload.indexOf(Buffer.from('繁', 'utf8')) + 1;",
+          "      process.stdout.write(payload.subarray(0, splitAt));",
+          "      setTimeout(() => {",
+          "        process.stdout.write(payload.subarray(splitAt));",
+          "        process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }) + '\\n');",
+          "      }, 15);",
+          "    }",
+          "  }",
+          "});",
+          "process.stdin.on('end', () => process.exit(0));",
+        ].join('\n'),
+        'utf8'
+      );
+      const agy = path.join(dir, process.platform === 'win32' ? 'agy.cmd' : 'agy');
+      fs.writeFileSync(
+        agy,
+        process.platform === 'win32'
+          ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`
+          : `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`,
+        { mode: 0o755 }
+      );
+
+      const res = await invokeAgy({
+        prompt: 'test utf8',
+        workDir: dir,
+        agyPath: agy,
+      });
+
+      assert.equal(res.exitCode, 0);
+      assert.equal(res.stdout, '繁體中文測試🚀');
+    } finally {
+      if (oldDepth === undefined) delete process.env.AGENT_DELEGATION_DEPTH;
+      else process.env.AGENT_DELEGATION_DEPTH = oldDepth;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

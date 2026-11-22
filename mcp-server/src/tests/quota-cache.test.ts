@@ -77,4 +77,42 @@ describe('Quota Cache & TTL Memoization', () => {
     const fresh = await getAgentQuota('claude');
     assert.equal(fresh.windows?.[0].usedPercent, 75);
   });
+
+  it('should refresh cache timestamp when markProviderDepleted is called', async () => {
+    process.env.FAKE_CLAUDE_STATUS_RESPONSE = JSON.stringify({
+      five_hour: { utilization: 10 },
+    });
+
+    await getAgentQuota('claude', { ttlMs: 40 });
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Mark depleted right before the original TTL would expire
+    markProviderDepleted('claude');
+
+    process.env.FAKE_CLAUDE_STATUS_RESPONSE = JSON.stringify({
+      five_hour: { utilization: 5 },
+    });
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Still within the refreshed 40ms TTL from markProviderDepleted
+    const stillDepleted = await getAgentQuota('claude', { ttlMs: 40 });
+    assert.equal(stillDepleted.availability, 'depleted');
+  });
+
+  it('should coalesce concurrent non-bypass quota queries for the same agent', async () => {
+    process.env.FAKE_CLAUDE_STATUS_RESPONSE = JSON.stringify({
+      five_hour: { utilization: 33 },
+    });
+
+    const [r1, r2, r3] = await Promise.all([
+      getAgentQuota('claude'),
+      getAgentQuota('claude'),
+      getAgentQuota('claude'),
+    ]);
+
+    assert.equal(r1, r2);
+    assert.equal(r2, r3);
+    assert.equal(r1.windows?.[0].usedPercent, 33);
+  });
 });

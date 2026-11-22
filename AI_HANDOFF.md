@@ -1,5 +1,15 @@
 # AI handoff
 
+## 2026-11-23 Antigravity：ACP 串流解碼、配額快取與模組共用最佳化
+
+- 針對 `mcp-server` 進行最佳化與強固改良：
+  - `mcp-server/src/core/acp-client.ts`：改用 `StringDecoder('utf8')` 與 `split('\n')` 處理 stdout JSON-RPC 串流，避免多位元組 UTF-8 字元（如繁體中文、emoji）跨 chunk 邊界被切斷而亂碼，並消除重複 `slice` 配置；抽出 `beginTeardown` 共用取消與逾時清理流程。
+  - `mcp-server/src/core/process.ts`：抽出並共用 `resolveWindowsSpawnSpec`（`.cmd`/`.bat` 經 `cmd.exe` 包裝邏輯），消除 `process.ts` 與 `acp-client.ts` 的重複程式碼。
+  - `mcp-server/src/services/invokers/agy-invoker.ts`：將 `normalizeAgyModelAndEffort` 的 9 組重複正規化邏輯重構為資料驅動規則表 `AGY_MODEL_RULES`。
+  - `mcp-server/src/services/quota/quota-service.ts`：修正 `markProviderDepleted` 更新既有快取時未刷新 `timestamp` 導致耗盡狀態提前過期的問題，抽出共用 `markProviderState`，並為非 `bypassCache` 查詢加入 `inFlightQueries` 併發去重與 `cacheEpochs` 防護，避免 `delegate_parallel` 等併發情境重複啟動多次配額子程序/請求。
+  - 新增單元測試：`mcp-server/src/tests/acp-client.test.ts`（跨 chunk 多位元組 UTF-8 解碼）與 `mcp-server/src/tests/quota-cache.test.ts`（`markProviderDepleted` TTL 刷新與併發查詢合併）。
+- 驗證：`npm run lint`（`tsc --noEmit`）、`npm run build`、`npm test`（126/126 通過）與 `tests/run-all.ps1`（9/9 通過）。既有 MCP 連線需重連/重啟才會載入新 build。
+
 ## 2026-11-23 Antigravity：AGY 呼叫改用 ACP（Agent Client Protocol）
 
 - 依使用者要求將 `mcp-server` 的 AGY 呼叫方式從單次 `agy -p` 改為 `agy acp --stdio`（JSON-RPC over stdio）：

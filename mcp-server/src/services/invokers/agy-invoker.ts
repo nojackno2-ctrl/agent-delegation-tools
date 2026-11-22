@@ -27,6 +27,57 @@ const NO_EFFORT_MODELS = new Set([
   'gemini-pro-orchestrator-neon',
 ]);
 
+interface AgyModelRule {
+  pattern: RegExp;
+  resolveModel: (match: RegExpMatchArray) => string;
+  effortGroups?: readonly [number, number];
+}
+
+const AGY_MODEL_RULES: readonly AgyModelRule[] = [
+  {
+    pattern: /^(?:gemini[ -]?)?(4)[ -]?neon(?:\s*\((xhigh|high|medium|low)\)|[ -](xhigh|high|medium|low))?$/i,
+    resolveModel: (m) => `gemini-${m[1]}-neon`,
+    effortGroups: [2, 3],
+  },
+  {
+    pattern: /^(?:gemini[ -]?)?(4)[ -]?argon(?:\s*\((high|medium|low)\)|[ -](high|medium|low))?$/i,
+    resolveModel: (m) => `gemini-${m[1]}-argon`,
+    effortGroups: [2, 3],
+  },
+  {
+    pattern: /^(?:gemini[ -]?)?(4)[ -]?hydrogen(?:\s*\((xhigh|high|medium|low)\)|[ -](xhigh|high|medium|low))?$/i,
+    resolveModel: (m) => `gemini-${m[1]}-hydrogen`,
+    effortGroups: [2, 3],
+  },
+  {
+    pattern: /^(?:gemini[ -]?pro[ -]?orchestrator[ -]?neon|orchestrator(?:\s*\((?:gemini[ -]?4[ -]?)?neon\)|[ -](?:gemini[ -]?4[ -]?)?neon))$/i,
+    resolveModel: () => 'gemini-pro-orchestrator-neon',
+  },
+  {
+    pattern: /^(?:gemini[ -]?pro[ -]?orchestrator[ -]?g1[ -]?pro|orchestrator(?:\s*\(argon\)|[ -]argon)?)$/i,
+    resolveModel: () => 'gemini-pro-orchestrator-g1-pro',
+  },
+  {
+    pattern: /^(?:gemini[ -]?)?(3\.[5-8])[ -]?flash(?:\s*\((high|medium|low)\)|[ -](high|medium|low))?$/i,
+    resolveModel: (m) => `gemini-${m[1]}-flash`,
+    effortGroups: [2, 3],
+  },
+  {
+    pattern: /^(?:gemini[ -]?)?(3\.1)[ -]?pro(?:\s*\((high|low)\)|[ -](high|low))?$/i,
+    resolveModel: () => 'gemini-3.1-pro',
+    effortGroups: [2, 3],
+  },
+  {
+    pattern: /^(?:claude[ -]?)?(opus|sonnet)[ -]?(?:5\.5|5-5)(?:\s*\((high|medium|low)\)|[ -](high|medium|low))?$/i,
+    resolveModel: (m) => `claude-${m[1].toLowerCase()}-5-5`,
+    effortGroups: [2, 3],
+  },
+  {
+    pattern: /^gpt[ -]?oss[ -]?120b(?:\s*\(medium\)|[ -]medium)?$/i,
+    resolveModel: () => 'gpt-oss-120b-medium',
+  },
+];
+
 export function normalizeAgyModelAndEffort(
   model?: string,
   effort?: InvokeAgyOptions['effort']
@@ -39,53 +90,16 @@ export function normalizeAgyModelAndEffort(
     effectiveModel = thinkingMatch[1].trim();
     if (!effectiveEffort) effectiveEffort = 'high';
   }
-  const neonMatch = effectiveModel.match(/^(?:gemini[ -]?)?(4)[ -]?neon(?:\s*\((xhigh|high|medium|low)\)|[ -](xhigh|high|medium|low))?$/i);
-  if (neonMatch) {
-    effectiveModel = `gemini-${neonMatch[1]}-neon`;
-    const effortPart = neonMatch[2] || neonMatch[3];
-    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as InvokeAgyOptions['effort'];
-  }
-  const argonMatch = effectiveModel.match(/^(?:gemini[ -]?)?(4)[ -]?argon(?:\s*\((high|medium|low)\)|[ -](high|medium|low))?$/i);
-  if (argonMatch) {
-    effectiveModel = `gemini-${argonMatch[1]}-argon`;
-    const effortPart = argonMatch[2] || argonMatch[3];
-    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as InvokeAgyOptions['effort'];
-  }
-  const hydrogenMatch = effectiveModel.match(/^(?:gemini[ -]?)?(4)[ -]?hydrogen(?:\s*\((xhigh|high|medium|low)\)|[ -](xhigh|high|medium|low))?$/i);
-  if (hydrogenMatch) {
-    effectiveModel = `gemini-${hydrogenMatch[1]}-hydrogen`;
-    const effortPart = hydrogenMatch[2] || hydrogenMatch[3];
-    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as InvokeAgyOptions['effort'];
-  }
-  const orchestratorNeonMatch = effectiveModel.match(/^(?:gemini[ -]?pro[ -]?orchestrator[ -]?neon|orchestrator(?:\s*\((?:gemini[ -]?4[ -]?)?neon\)|[ -](?:gemini[ -]?4[ -]?)?neon))$/i);
-  if (orchestratorNeonMatch) {
-    effectiveModel = 'gemini-pro-orchestrator-neon';
-  }
-  const orchestratorMatch = effectiveModel.match(/^(?:gemini[ -]?pro[ -]?orchestrator[ -]?g1[ -]?pro|orchestrator(?:\s*\(argon\)|[ -]argon)?)$/i);
-  if (orchestratorMatch) {
-    effectiveModel = 'gemini-pro-orchestrator-g1-pro';
-  }
-  const flashMatch = effectiveModel.match(/^(?:gemini[ -]?)?(3\.[5-8])[ -]?flash(?:\s*\((high|medium|low)\)|[ -](high|medium|low))?$/i);
-  if (flashMatch) {
-    effectiveModel = `gemini-${flashMatch[1]}-flash`;
-    const effortPart = flashMatch[2] || flashMatch[3];
-    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as InvokeAgyOptions['effort'];
-  }
-  const proMatch = effectiveModel.match(/^(?:gemini[ -]?)?(3\.1)[ -]?pro(?:\s*\((high|low)\)|[ -](high|low))?$/i);
-  if (proMatch) {
-    effectiveModel = 'gemini-3.1-pro';
-    const effortPart = proMatch[2] || proMatch[3];
-    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as InvokeAgyOptions['effort'];
-  }
-  const claudeMatch = effectiveModel.match(/^(?:claude[ -]?)?(opus|sonnet)[ -]?(?:5\.5|5-5)(?:\s*\((high|medium|low)\)|[ -](high|medium|low))?$/i);
-  if (claudeMatch) {
-    effectiveModel = `claude-${claudeMatch[1].toLowerCase()}-5-5`;
-    const effortPart = claudeMatch[2] || claudeMatch[3];
-    if (effortPart && !effectiveEffort) effectiveEffort = effortPart.toLowerCase() as InvokeAgyOptions['effort'];
-  }
-  const gptOssMatch = effectiveModel.match(/^gpt[ -]?oss[ -]?120b(?:\s*\(medium\)|[ -]medium)?$/i);
-  if (gptOssMatch) {
-    effectiveModel = 'gpt-oss-120b-medium';
+
+  for (const rule of AGY_MODEL_RULES) {
+    const match = effectiveModel.match(rule.pattern);
+    if (!match) continue;
+    effectiveModel = rule.resolveModel(match);
+    if (rule.effortGroups && !effectiveEffort) {
+      const effortPart = match[rule.effortGroups[0]] || match[rule.effortGroups[1]];
+      if (effortPart) effectiveEffort = effortPart.toLowerCase() as InvokeAgyOptions['effort'];
+    }
+    break;
   }
 
   if (NO_EFFORT_MODELS.has(effectiveModel)) {
