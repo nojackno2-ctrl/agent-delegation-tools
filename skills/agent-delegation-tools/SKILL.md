@@ -31,7 +31,7 @@ Unless the user names a different model, delegate with these and do not override
 | Backend | Model | Effort |
 |---|---|---|
 | Antigravity (AGY) | `gemini-4-hydrogen` | `low` |
-| Codex CLI | `gpt-6.2-sol` | `low` |
+| Codex CLI | `gpt-6.1-terra` | `low` |
 | Claude CLI | `claude-sonnet-5-5` | `low` |
 
 The `agent-delegation` MCP server applies these same defaults automatically, so `delegate_task` / `invoke_*` calls need no model arguments. Prefer the MCP tools when they are connected; the PowerShell wrappers below are the fallback path.
@@ -143,7 +143,7 @@ Use `gemini-4-hydrogen` (with `-Effort low|medium|high|xhigh`, `gemini-4-hydroge
 
 ```powershell
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'codex.ps1') `
-    -WorkDir 'C:\path\to\project' -Sandbox workspace-write -Model 'gpt-6.2-sol' -Effort low `
+    -WorkDir 'C:\path\to\project' -Sandbox workspace-write -Model 'gpt-6.1-terra' -Effort low `
     -ApproveForMe -Ephemeral -OutFile "$env:TEMP\codex-worker.txt" `
     'Refactor the database repository in src/db.ts to use connection pooling.'
 ```
@@ -167,7 +167,7 @@ The wrapper sends the prompt through UTF-8 stdin, disables prompt suggestions, a
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'delegate.ps1') `
     -TaskType implementation -Sandbox workspace-write -BalanceQuota `
     -WorkDir 'C:\path\to\project' `
-    -AgyModel 'gemini-4-hydrogen' -AgyEffort low -CodexModel 'gpt-6.2-sol' -CodexEffort low `
+    -AgyModel 'gemini-4-hydrogen' -AgyEffort low -CodexModel 'gpt-6.1-terra' -CodexEffort low `
     -ClaudeModel 'claude-sonnet-5-5' -ClaudeEffort low -OutFile "$env:TEMP\worker.txt" `
     'Implement the requested feature in src/service.ts and verify tests pass.'
 ```

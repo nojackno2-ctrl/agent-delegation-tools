@@ -1,5 +1,10 @@
 # AI handoff
 
+## 2026-11-23 Antigravity：Codex 預設模型調整為 gpt-6.1-terra
+
+- 依使用者要求將 Codex 預設模型由 `gpt-6.2-sol` 改為 `gpt-6.1-terra`（effort 維持 `low`），同步更新 `mcp-server/src/core/defaults.ts`、`register.ts`、`codex.ps1`、`delegate.ps1`、`SKILL.md`、`CLAUDE.md`、`README.md` 與相關測試（保留 `README.md` 本機模型目錄中的 `gpt-6.2-sol`／`gpt-6.2-astra` 記錄）。
+- 驗證：`npm run lint`、`npm run build`、`npm test`（127/127 通過）、`tests/run-all.ps1`（9/9 通過）；`install.ps1` 已同步 4 份個人技能副本（SHA-256 驗證通過）。既有 MCP 連線需重連/重啟才會載入新 build 與工具描述。
+
 ## 2026-11-23 Antigravity：Codex／Claude 最佳化與更新預設模型為 gpt-6.2-sol
 
 - 依本機最新模型目錄（`~/.codex/models_cache.json` 新增 `gpt-6.2-sol`、`gpt-6.2-astra`；`claude` 實測 `sonnet` 對應 `claude-sonnet-5-5`；`agy models` 維持最新）與強固需求進行最佳化：

@@ -16,8 +16,8 @@ describe('Delegation defaults policy', () => {
       assert.equal(DEFAULT_MODELS.agy.effort, 'low');
     });
 
-    it('should default Codex to GPT-6.2-Sol at low effort', () => {
-      assert.equal(DEFAULT_MODELS.codex.model, 'gpt-6.2-sol');
+    it('should default Codex to GPT-6.1 Terra at low effort', () => {
+      assert.equal(DEFAULT_MODELS.codex.model, 'gpt-6.1-terra');
       assert.equal(DEFAULT_MODELS.codex.effort, 'low');
     });
 

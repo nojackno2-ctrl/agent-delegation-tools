@@ -357,7 +357,7 @@ describe('MCP Server Hardening Specification', () => {
   it('Item 8 & 9: Model/effort text generated from DEFAULT_MODELS and softened policy wording', async () => {
     assert.equal(DEFAULT_MODELS.agy.model, 'gemini-4-hydrogen');
     assert.equal(DEFAULT_MODELS.agy.effort, 'low');
-    assert.equal(DEFAULT_MODELS.codex.model, 'gpt-6.2-sol');
+    assert.equal(DEFAULT_MODELS.codex.model, 'gpt-6.1-terra');
     assert.equal(DEFAULT_MODELS.codex.effort, 'low');
     assert.equal(DEFAULT_MODELS.claude.model, 'claude-sonnet-5-5');
     assert.equal(DEFAULT_MODELS.claude.effort, 'low');
