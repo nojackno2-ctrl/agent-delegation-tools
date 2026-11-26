@@ -33,6 +33,17 @@ export const DEFAULT_MODELS = {
 } as const satisfies Record<AgentName, { model: string; effort: string }>;
 
 /**
+ * Strongest callable model + reasoning effort per backend for Advisor Mode.
+ * Used by consult_advisor / advisor.ps1 so a cheaper executor in any host
+ * (Claude, AGY, or Codex) can consult the top-tier model of any provider.
+ */
+export const ADVISOR_MODELS = {
+  agy: { model: 'gemini-4-neon', effort: 'xhigh' },
+  codex: { model: 'gpt-6.2-astra', effort: 'max' },
+  claude: { model: 'claude-opus-5-5', effort: 'max' },
+} as const satisfies Record<AgentName, { model: string; effort: string }>;
+
+/**
  * Delegated subagents are automation, not interactive sessions: a permission
  * prompt in a headless child is a hang, not a safety net. Work is bounded by
  * `work_dir` instead.

@@ -228,7 +228,7 @@ Write-Host ''
 # --- 2. Canonical script package -------------------------------------------
 
 $canonicalDir = Join-Path $RepoRoot 'skills\agent-delegation-tools\scripts'
-$wrapperNames = @('agy.ps1', 'claude.ps1', 'codex.ps1', 'delegate.ps1', 'parallel.ps1', 'status.ps1')
+$wrapperNames = @('advisor.ps1', 'agy.ps1', 'claude.ps1', 'codex.ps1', 'delegate.ps1', 'parallel.ps1', 'status.ps1')
 foreach ($wrapperName in $wrapperNames) {
     $canonicalPath = Join-Path $canonicalDir $wrapperName
     $status = if (Test-Path -LiteralPath $canonicalPath -PathType Leaf) { 'Pass' } else { 'Fail' }
@@ -293,6 +293,7 @@ if ($SkipLiveProbes) {
 else {
     Write-Host '== Recursion guard (AGENT_DELEGATION_DEPTH=1 must be refused before any external CLI is resolved) ==' -ForegroundColor Cyan
     $recursiveProbeCases = @(
+        @{ Name = 'advisor.ps1'; Arguments = @('-Question', 'VALIDATION_PROBE') }
         @{ Name = 'agy.ps1'; Arguments = @('-Prompt', 'VALIDATION_PROBE') }
         @{ Name = 'claude.ps1'; Arguments = @('-Prompt', 'VALIDATION_PROBE') }
         @{ Name = 'codex.ps1'; Arguments = @('-Prompt', 'VALIDATION_PROBE') }

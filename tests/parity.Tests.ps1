@@ -18,21 +18,28 @@ $typesPath = Join-Path $repoRoot 'mcp-server\src\core\types.ts'
 Assert-True (Test-Path -LiteralPath $defaultsPath -PathType Leaf) "Missing $defaultsPath"
 Assert-True (Test-Path -LiteralPath $typesPath -PathType Leaf) "Missing $typesPath"
 
-# 1. Parse DEFAULT_MODELS from defaults.ts
+# 1. Parse DEFAULT_MODELS and ADVISOR_MODELS from defaults.ts
 $defaultsContent = [IO.File]::ReadAllText($defaultsPath, [Text.Encoding]::UTF8)
-$expectedModels = @{}
 
-if ($defaultsContent -match "agy:\s*\{\s*model:\s*'([^']+)',\s*effort:\s*'([^']+)'") {
-    $expectedModels['agy'] = @{ Model = $matches[1]; Effort = $matches[2] }
-} else { throw "Failed to parse agy model defaults from $defaultsPath" }
+function Parse-ModelBlock {
+    param([string]$Content, [string]$BlockName)
+    if ($Content -notmatch ("(?s)export const {0} = \{{(.*?)\}} as const" -f [regex]::Escape($BlockName))) {
+        throw "Failed to parse $BlockName block from $defaultsPath"
+    }
+    $block = $matches[1]
+    $result = @{}
+    foreach ($agent in @('agy', 'codex', 'claude')) {
+        if ($block -match ("{0}:\s*\{{\s*model:\s*'([^']+)',\s*effort:\s*'([^']+)'" -f $agent)) {
+            $result[$agent] = @{ Model = $matches[1]; Effort = $matches[2] }
+        } else {
+            throw "Failed to parse $agent from $BlockName in $defaultsPath"
+        }
+    }
+    return $result
+}
 
-if ($defaultsContent -match "codex:\s*\{\s*model:\s*'([^']+)',\s*effort:\s*'([^']+)'") {
-    $expectedModels['codex'] = @{ Model = $matches[1]; Effort = $matches[2] }
-} else { throw "Failed to parse codex model defaults from $defaultsPath" }
-
-if ($defaultsContent -match "claude:\s*\{\s*model:\s*'([^']+)',\s*effort:\s*'([^']+)'") {
-    $expectedModels['claude'] = @{ Model = $matches[1]; Effort = $matches[2] }
-} else { throw "Failed to parse claude model defaults from $defaultsPath" }
+$expectedModels = Parse-ModelBlock -Content $defaultsContent -BlockName 'DEFAULT_MODELS'
+$expectedAdvisorModels = Parse-ModelBlock -Content $defaultsContent -BlockName 'ADVISOR_MODELS'
 
 # 2. Parse EXIT_CODES from types.ts
 $typesContent = [IO.File]::ReadAllText($typesPath, [Text.Encoding]::UTF8)
@@ -56,7 +63,7 @@ Assert-Equal 124 $expectedExitCodes['TIMEOUT'] 'EXIT_CODES.TIMEOUT must be 124'
 Assert-Equal 130 $expectedExitCodes['CANCELLED'] 'EXIT_CODES.CANCELLED must be 130'
 
 # 3. Assert PowerShell wrappers declare the aligned exit codes
-$scriptNames = @('agy.ps1', 'claude.ps1', 'codex.ps1', 'delegate.ps1', 'parallel.ps1', 'status.ps1')
+$scriptNames = @('advisor.ps1', 'agy.ps1', 'claude.ps1', 'codex.ps1', 'delegate.ps1', 'parallel.ps1', 'status.ps1')
 $canonicalDir = Join-Path $repoRoot 'skills\agent-delegation-tools\scripts'
 
 foreach ($scriptName in $scriptNames) {
@@ -86,5 +93,15 @@ Assert-True ($delegateContent -match ("claude\s*=\s*'{0}'" -f [regex]::Escape($e
 # agy.ps1 effort default when model is passed without effort
 $agyContent = [IO.File]::ReadAllText((Join-Path $canonicalDir 'agy.ps1'), [Text.Encoding]::UTF8)
 Assert-True ($agyContent -match '\$effectiveEffort\s*=\s*''low''') "agy.ps1 effort fallback must be 'low'."
+
+# 5. Assert strongest advisor models and efforts match in advisor.ps1
+$advisorContent = [IO.File]::ReadAllText((Join-Path $canonicalDir 'advisor.ps1'), [Text.Encoding]::UTF8)
+Assert-True ($advisorContent -match ("agy\s*=\s*'{0}'" -f [regex]::Escape($expectedAdvisorModels['agy'].Model))) "advisor.ps1 agy advisor Model mismatch."
+Assert-True ($advisorContent -match ("codex\s*=\s*'{0}'" -f [regex]::Escape($expectedAdvisorModels['codex'].Model))) "advisor.ps1 codex advisor Model mismatch."
+Assert-True ($advisorContent -match ("claude\s*=\s*'{0}'" -f [regex]::Escape($expectedAdvisorModels['claude'].Model))) "advisor.ps1 claude advisor Model mismatch."
+
+Assert-True ($advisorContent -match ("agy\s*=\s*'{0}'" -f [regex]::Escape($expectedAdvisorModels['agy'].Effort))) "advisor.ps1 agy advisor Effort mismatch."
+Assert-True ($advisorContent -match ("codex\s*=\s*'{0}'" -f [regex]::Escape($expectedAdvisorModels['codex'].Effort))) "advisor.ps1 codex advisor Effort mismatch."
+Assert-True ($advisorContent -match ("claude\s*=\s*'{0}'" -f [regex]::Escape($expectedAdvisorModels['claude'].Effort))) "advisor.ps1 claude advisor Effort mismatch."
 
 'parity.Tests.ps1: all tests passed.'

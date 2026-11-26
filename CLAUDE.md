@@ -25,6 +25,11 @@
 8. **追蹤與取消工作。** `get_job_status` 省略 `job_id` 列出保留的工作；`cancel_job(job_id)` 終止子行程樹（退出碼 `130`）。完成工作保留 1 小時、最多 50 筆；檢查結果中的 `attempts` 容錯切換歷史，截斷輸出保留尾端並附完整 log 路徑。收到 ID 不代表成功，仍須驗證結果與 diff。
 
 9. **本機 AI 用 `invoke_local`。** 不耗雲端額度，適合摘要、審查、草稿、分類與小型檔案修改。未帶 `work_dir` 時是純文字模式，`task`/`context` 須帶齊資料；帶 `work_dir` 時可在該目錄內列出／讀取／搜尋檔案，`sandbox=workspace-write`（預設）時還能寫入、編輯、刪除檔案。路徑由伺服器限制在 `work_dir` 內，沒有 shell，無法跑測試；父代理須審查 `files_changed` 與 diff。一次只呼叫一個，結果未經驗證。`list_local_models` 查看可用模型；`delegate_task` 永遠不會自動選它。需要能執行指令的本機代理時，改用 `invoke_codex` 並設 `model` 為本機模型，Codex 會透過 `-p ollama` 跑在 Ollama 上。
+10. **顧問模式（跨供應商最強模型唯讀諮詢）。** 當主對話以較便宜的模型執行，遇到棘手 bug、架構抉擇或設計瓶頸時，可呼叫 `consult_advisor` 以**唯讀模式**向高階顧問討論解法，不交出檔案修改權；Claude、AGY、Codex 主機皆可跨家呼叫彼此的最強模型：
+    - `agy`：`gemini-4-neon`（effort `xhigh`）
+    - `codex`：`gpt-6.2-astra`（effort `max`）
+    - `claude`：`claude-opus-5-5`（effort `max`）
+    用 `configure_advisor` 查看或設定本對話預設顧問（`auto`｜`agy`｜`codex`｜`claude`）。`consult_advisor` 預設 `async=true`，搭配 `get_job_result` 輪詢。
 
 ## 例外
 

@@ -72,6 +72,8 @@ MCP Server 會在連線時把這份政策以 `instructions` 送給客戶端，�
 | **智慧動態調度器** | `delegate_task` | 自動依任務類型路由（`analysis`/`scaffolding` $\to$ AGY，`implementation`/`review` $\to$ Codex）並即時負載均衡；自動路由**不會**選 Claude | 智慧選型 | 依選用後端 |
 | **並行 Worker Pool** | `delegate_parallel` | 多任務並行批次分發執行，在兩個外部 CLI 之間輪流分配（可自訂並行上限，預設 4） | 智慧選型 | 依選用後端 |
 | **即時配額檢測器** | `get_agent_quotas` | 零 Token 消耗即時讀取三大 CLI 訂閱用量、剩餘百分比與重置時間 | — | 0 Token |
+| **顧問模式諮詢** | `consult_advisor` | 跨供應商唯讀高階顧問諮詢；便宜模型執行、遇難題時請最強模型討論解法（不修改檔案） | AGY `gemini-4-neon` (`xhigh`) / Codex `gpt-6.2-astra` (`max`) / Claude `claude-opus-5-5` (`max`) | 依選用顧問 |
+| **顧問模式設定** | `configure_advisor` | 檢視或設定本對話預設顧問供應商／模型／思考強度（`auto`｜`agy`｜`codex`｜`claude`） | — | 0 Token |
 | **工作狀態** | `get_job_status` | 省略 `job_id` 列出保留的工作；指定 ID 查詢摘要 | — | 0 Token |
 | **工作結果** | `get_job_result` | 以 `job_id` 輪詢，`wait_sec` 預設 25、上限 50 秒 | — | 0 Token |
 | **取消工作** | `cancel_job` | 取消指定工作並終止子行程樹 | — | 0 Token |
@@ -149,6 +151,8 @@ npm run build
         "invoke_agy",
         "invoke_codex",
         "invoke_claude",
+        "consult_advisor",
+        "configure_advisor",
         "get_job_status",
         "get_job_result",
         "cancel_job"
@@ -224,6 +228,17 @@ args = ["<REPO_ROOT>/mcp-server/dist/index.js"]
 
 ### 9. `cancel_job`（取消與清理）
 - **參數**：`job_id`（必填）；終止該工作的子行程樹，取消退出碼為 `130`。
+
+### 10. `consult_advisor` 與 `configure_advisor`（跨供應商顧問模式）
+讓 **Claude、AGY、Codex** 任一主機都能在同一個對話中以較便宜的模型執行日常開發，遇到架構抉擇、棘手 Bug 或設計瓶頸時，以**唯讀模式**向任一家可呼叫的最強模型請教解法（不修改檔案，由主對話模型自行決定如何實作），突破 Claude 內建顧問僅能呼叫自家模型的限制。
+
+- **各供應商預設最強顧問模型**（定義於 `mcp-server/src/core/defaults.ts` 的 `ADVISOR_MODELS`，並與 `advisor.ps1` 保持 parity）：
+  - `agy`：`gemini-4-neon`（effort `xhigh`）
+  - `codex`：`gpt-6.2-astra`（effort `max`）
+  - `claude`：`claude-opus-5-5`（effort `max`）
+- **`configure_advisor` 參數**：`advisor` (`"auto"` | `"agy"` | `"codex"` | `"claude"`)、`model`（可選覆寫）、`effort` (`"low"` | `"medium"` | `"high"` | `"xhigh"` | `"max"`)、`fallback_agent` (`"agy"` | `"codex"` | `"claude"` | `"none"`)、`reset` (boolean)。不帶參數時回傳目前設定與三家最強預設模型。
+- **`consult_advisor` 參數**：`question`（必填）、`context`（可選，提供已嘗試方向或錯誤訊息）、`work_dir`（必填、絕對且既存目錄，顧問以唯讀模式檢視）、`advisor`（可選，預設沿用 `configure_advisor` 設定）、`fallback_agent`、`balance_quota`（預設 `true`）、`model`、`effort`、`timeout_sec`（預設 `0`）、`async`（預設 `true`，回傳 `job_id` 並用 `get_job_result` 輪詢）。
+- **環境變數預設**：可在 MCP Server 環境設定 `DELEGATION_ADVISOR`、`DELEGATION_ADVISOR_MODEL`、`DELEGATION_ADVISOR_EFFORT`。PowerShell 前端對應腳本為 `skills/agent-delegation-tools/scripts/advisor.ps1`。
 
 ## 非同步工作流程與主機逾時
 

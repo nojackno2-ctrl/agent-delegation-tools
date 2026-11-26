@@ -34,6 +34,24 @@ Unless the user names a different model, delegate with these and do not override
 | Codex CLI | `gpt-6.1-terra` | `low` |
 | Claude CLI | `claude-sonnet-5-5` | `low` |
 
+### Advisor Mode (strongest callable models, read-only consultation)
+
+When working with a cheaper executor model in Claude, AGY, or Codex and hitting a hard bug, architecture decision, or design impasse, use **Advisor Mode** (`consult_advisor` / `configure_advisor`, or `advisor.ps1` in PowerShell) to consult any provider's strongest callable model in **read-only** mode without handing off file edits:
+
+| Advisor Backend | Model | Effort |
+|---|---|---|
+| Antigravity (AGY) | `gemini-4-neon` | `xhigh` |
+| Codex CLI | `gpt-6.2-astra` | `max` |
+| Claude CLI | `claude-opus-5-5` | `max` |
+
+Call `configure_advisor` to inspect or pin the session's active advisor (`auto|agy|codex|claude`), and `consult_advisor` (defaults `async=true`) to ask a question with optional `context`. In PowerShell:
+
+```powershell
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $delegationScripts 'advisor.ps1') `
+    -Advisor codex -WorkDir 'C:\path\to\project' -BalanceQuota `
+    -Question 'Why does the reconnect loop race with shutdown?' -Context 'Tried moving the lock...'
+```
+
 The `agent-delegation` MCP server applies these same defaults automatically, so `delegate_task` / `invoke_*` calls need no model arguments. Prefer the MCP tools when they are connected; the PowerShell wrappers below are the fallback path.
 
 ## MCP-First Discovery & Tool Routing

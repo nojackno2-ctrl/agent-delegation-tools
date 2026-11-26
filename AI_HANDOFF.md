@@ -1,5 +1,17 @@
 # AI handoff
 
+## 2026-11-26 Antigravity：新增跨供應商顧問模式（Advisor Mode）
+
+- 依使用者要求為 Claude、AGY、Codex 三大主機加入跨供應商「顧問模式」（便宜模型執行、遇難題時以唯讀模式諮詢各家可呼叫的最強模型，突破 Claude 內建顧問僅能呼叫自家模型的限制）：
+  - 依本機實測與模型目錄確認各家可呼叫最強模型並定義 `ADVISOR_MODELS`（`mcp-server/src/core/defaults.ts`）：
+    - `agy`：`gemini-4-neon`（effort `xhigh`，對應 `agy models` 的 `gemini-4-neon-xhigh`）
+    - `codex`：`gpt-6.2-astra`（effort `max`，`~/.codex/models_cache.json` 最強模型且 API 支援 `max`）
+    - `claude`：`claude-opus-5-5`（effort `max`，實測 `claude -p --model opus --effort max` Exit 0；`fable` 實測回傳 429 `model_requires_usage_credits` 需額外 credits 故未採用）
+  - 新增 `mcp-server/src/services/dispatcher/advisor-service.ts`（工作階段顧問設定、唯讀諮詢提示詞包裝、跨供應商最強模型解析與配額容錯切換）與 `mcp-server/src/tools/advisor.ts`（`consult_advisor` 預設 `async=true`、`readOnlyHint=true`；`configure_advisor` 檢視／設定本對話顧問與重設）。
+  - 註冊於 `mcp-server/src/index.ts`（含 `DELEGATION_POLICY` 第 10 條）與 `mcp-server/src/register.ts`，同步更新 Antigravity MCP schemas（`consult_advisor.json`、`configure_advisor.json`）。
+  - 新增 PowerShell 前端 `skills/agent-delegation-tools/scripts/advisor.ps1`，並於 `tests/parity.Tests.ps1`、`validate.ps1`、`CLAUDE.md`、`skills/agent-delegation-tools/SKILL.md`、`README.md` 同步 parity 與說明。
+- 驗證：`npm run lint`（`tsc --noEmit`）、`npm run build`、`npm test`（135/135 通過，含 `advisor.test.ts` 8 項測試，覆蓋三家最強模型、唯讀模式、跨家容錯切換與 stdio MCP 非同步諮詢）、`tests/run-all.ps1`（10/10 通過，含 `advisor-wrapper.Tests.ps1` 與 `parity.Tests.ps1`）、`validate.ps1`（51 pass / 0 fail / 1 skip）；`install.ps1` 已同步 4 份個人技能副本（SHA-256 驗證通過）。未以真實收費/額度端到端呼叫 `consult_advisor`（僅以假 CLI／ACP 驗證協定與參數，另單獨實測 `claude --model opus --effort max` Exit 0）。既有 MCP 連線需重連/重啟才會載入新工具。
+
 ## 2026-11-23 Antigravity：Codex 預設模型調整為 gpt-6.1-terra
 
 - 依使用者要求將 Codex 預設模型由 `gpt-6.2-sol` 改為 `gpt-6.1-terra`（effort 維持 `low`），同步更新 `mcp-server/src/core/defaults.ts`、`register.ts`、`codex.ps1`、`delegate.ps1`、`SKILL.md`、`CLAUDE.md`、`README.md` 與相關測試（保留 `README.md` 本機模型目錄中的 `gpt-6.2-sol`／`gpt-6.2-astra` 記錄）。

@@ -11,8 +11,14 @@ import {
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import { DEFAULT_MODELS, DEFAULT_LOCAL_MODEL } from './core/defaults.js';
+import { DEFAULT_MODELS, ADVISOR_MODELS, DEFAULT_LOCAL_MODEL } from './core/defaults.js';
 import { invokeLocalSchema, listLocalModelsSchema, handleInvokeLocal, handleListLocalModels } from './tools/local.js';
+import {
+  configureAdvisorSchema,
+  consultAdvisorSchema,
+  handleConfigureAdvisor,
+  handleConsultAdvisor,
+} from './tools/advisor.js';
 
 import {
   getAgentQuotasSchema,
@@ -84,7 +90,17 @@ Rules:
    and, with sandbox=workspace-write (default), write/edit/delete them. Paths are
    confined to work_dir by the server and there is no shell tool, so it cannot run
    tests. Review its diff (files_changed). Make one call at a time; output is unverified.
-   Local is never auto-selected by delegate_task; omit model to prefer its default.`;
+   Local is never auto-selected by delegate_task; omit model to prefer its default.
+10. Advisor Mode (cross-provider top-tier consultation): when working with a cheaper
+    executor model and hitting a hard bug, architectural decision, or design impasse,
+    consult a top-tier Advisor model in read-only mode via consult_advisor without
+    handing off file edits. Works across Claude, AGY, and Codex hosts (including
+    Claude consulting AGY or Codex). Strongest callable defaults:
+      - agy    -> ${ADVISOR_MODELS.agy.model} (effort ${ADVISOR_MODELS.agy.effort})
+      - codex  -> ${ADVISOR_MODELS.codex.model} (effort ${ADVISOR_MODELS.codex.effort})
+      - claude -> ${ADVISOR_MODELS.claude.model} (effort ${ADVISOR_MODELS.claude.effort})
+    Use configure_advisor to inspect or pin the session's active advisor provider
+    (auto|agy|codex|claude). consult_advisor defaults to async=true; poll get_job_result.`;
 
 // Helper to convert Zod schema to clean JSON Schema for MCP tools
 function toToolSchema(zodSchema: any) {
@@ -187,6 +203,20 @@ async function main() {
           inputSchema: toToolSchema(invokeClaudeSchema),
           annotations: { readOnlyHint: false, destructiveHint: false },
         },
+        {
+          name: 'consult_advisor',
+          description:
+            `Advisor Mode (read-only cross-provider consultation). Defaults to async=true: returns job_id; poll get_job_result. Consult the strongest callable model of AGY (${ADVISOR_MODELS.agy.model} ${ADVISOR_MODELS.agy.effort}), Codex (${ADVISOR_MODELS.codex.model} ${ADVISOR_MODELS.codex.effort}), or Claude (${ADVISOR_MODELS.claude.model} ${ADVISOR_MODELS.claude.effort}) when a cheaper executor hits a hard bug, architecture decision, or design tradeoff. Never modifies files.`,
+          inputSchema: toToolSchema(consultAdvisorSchema),
+          annotations: { readOnlyHint: true, destructiveHint: false },
+        },
+        {
+          name: 'configure_advisor',
+          description:
+            `View or set the active session Advisor provider/model/effort used by consult_advisor (auto|agy|codex|claude). Call with no arguments to inspect current settings and each provider's strongest default advisor model.`,
+          inputSchema: toToolSchema(configureAdvisorSchema),
+          annotations: { readOnlyHint: false, destructiveHint: false },
+        },
       ],
     };
   });
@@ -230,6 +260,14 @@ async function main() {
         case 'invoke_claude': {
           const parsed = invokeClaudeSchema.parse(args);
           return await handleInvokeClaude(parsed, context);
+        }
+        case 'consult_advisor': {
+          const parsed = consultAdvisorSchema.parse(args);
+          return await handleConsultAdvisor(parsed, context);
+        }
+        case 'configure_advisor': {
+          const parsed = configureAdvisorSchema.parse(args);
+          return handleConfigureAdvisor(parsed);
         }
         default:
           throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);

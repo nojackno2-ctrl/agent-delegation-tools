@@ -6,6 +6,8 @@ import { zodToJsonSchema } from 'zod-to-json-schema';
 import { getAgentQuotasSchema } from './tools/quota.js';
 import { delegateTaskSchema, delegateParallelSchema } from './tools/delegate.js';
 import { invokeAgySchema, invokeCodexSchema, invokeClaudeSchema } from './tools/invokers.js';
+import { configureAdvisorSchema, consultAdvisorSchema } from './tools/advisor.js';
+import { ADVISOR_MODELS } from './core/defaults.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -50,6 +52,18 @@ export const tools = [
     description:
       'Directly invoke the Anthropic Claude CLI subagent (claude-sonnet-5-5, effort low) with token-isolated context (--safe-mode) and session resume. Last resort: it spends the same subscription quota as the parent agent, so prefer invoke_agy / invoke_codex.',
     schema: invokeClaudeSchema,
+  },
+  {
+    name: 'consult_advisor',
+    description:
+      `Advisor Mode (read-only cross-provider consultation). Consult the strongest callable model of AGY (${ADVISOR_MODELS.agy.model} ${ADVISOR_MODELS.agy.effort}), Codex (${ADVISOR_MODELS.codex.model} ${ADVISOR_MODELS.codex.effort}), or Claude (${ADVISOR_MODELS.claude.model} ${ADVISOR_MODELS.claude.effort}) for hard bugs, architecture decisions, or design tradeoffs without modifying files.`,
+    schema: consultAdvisorSchema,
+  },
+  {
+    name: 'configure_advisor',
+    description:
+      'View or set the active session Advisor provider/model/effort used by consult_advisor (auto|agy|codex|claude). Call with no arguments to inspect current settings and strongest defaults.',
+    schema: configureAdvisorSchema,
   },
 ];
 
