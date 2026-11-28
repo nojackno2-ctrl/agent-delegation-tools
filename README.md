@@ -50,7 +50,7 @@
 
 父代理是**調度員**：實作、重構、鷹架、批次修改、整份 codebase 閱讀等工作一律外送給 CLI 子代理執行，不自己動手，也不開 Claude 子代理。
 
-- **兩個外部 CLI 承擔主要負載。** `claude` 後端花的是和父代理同一份訂閱額度，只省 context 不省額度，因此自動路由永不選它；只有使用者指名、或 AGY 與 Codex 都耗盡時才會用到。
+- **兩個外部 CLI 承擔主要負載（依 `DELEGATION_HOST` 自動識別主機）。** 註冊腳本會為不同主機注入 `DELEGATION_HOST`（`agy` / `codex` / `claude`）：在 Claude 主機上優先用 AGY 與 Codex；在 Antigravity（含 **AGY Orchestrator 模式**的 Plan 與 Execute 階段）上優先用 **Codex 與 Claude**；在 Codex 主機上優先用 AGY 與 Claude。與父代理同供應商的後端只省 context 不省額度，因此自動路由永不選它。
 - **額度決定路由。** `balance_quota` 預設開啟，派工前讀三個 CLI 的即時額度（10 秒快取），耗盡者自動跳過並轉移。
 - **子代理預設就有寫入權限。** `sandbox` 預設 `workspace-write`，寫入模式跳過互動提示；只有 Codex 提供 OS 沙箱邊界，AGY 與 Claude 不受 `work_dir` 限制（見下方沙箱說明）。純分析才傳 `read-only`。
 - **MCP 優先發現與單一命名空間**：在 Codex 及所有支援環境中，一律優先搜尋 deferred/lazy 工具（`get_agent_quotas`、`delegate_task`、`delegate_parallel`、`invoke_agy`、`invoke_codex`、`invoke_claude`、`get_job_status`、`get_job_result`、`cancel_job`，包含 `ALL_TOOLS` / tool search），使用單一 canonical `agent_delegation` 命名空間。唯有確認無 MCP 連接時才 fallback 至 PowerShell 腳本。
@@ -69,7 +69,7 @@ MCP Server 會在連線時把這份政策以 `instructions` 送給客戶端，�
 | **Anthropic Claude Code** | `invoke_claude` | 深度安全審查、邏輯對齊、架構邊界掃描；支援 Session 接續 | `claude-sonnet-5-5` + effort `low` | Anthropic Claude（**與父代理同一份額度**） |
 
 模型參數接受 CLI 支援的任意模型名稱，實際可用性依帳號與供應商而定。2026-11-23 本機 Codex 模型目錄包含 `gpt-6.2-sol`、`gpt-6.2-astra`、`gpt-6.1-terra`、`gpt-6.1-sol`、`gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`；2026-11-21 AGY 的 `agy models` 列出 `gemini-4-neon`（low／medium／high／xhigh）、`gemini-4-argon`（low／medium／high）、`gemini-4-hydrogen`（low／medium／high／xhigh）、`gemini-pro-orchestrator-neon`（`Orchestrator (Neon)`，不接受 `--effort`）、`gemini-pro-orchestrator-g1-pro`（`Orchestrator (Argon)`，不接受 `--effort`）、`gemini-3.8-flash`（low／medium／high）、`claude-opus-5-5`（low／medium／high）、`claude-sonnet-5-5`（low／medium／high），以及固定 medium 的 `gpt-oss-120b-medium`。Claude Code 也接受 `sonnet`、`opus`、`haiku` 等別名。這些清單不是白名單；可使用 CLI 支援的新模型。
-| **智慧動態調度器** | `delegate_task` | 自動依任務類型路由（`analysis`/`scaffolding` $\to$ AGY，`implementation`/`review` $\to$ Codex）並即時負載均衡；自動路由**不會**選 Claude | 智慧選型 | 依選用後端 |
+| **智慧動態調度器** | `delegate_task` | 自動依 `DELEGATION_HOST` 與任務類型路由（Claude 主機：`analysis`/`scaffolding` $\to$ AGY、`implementation`/`review` $\to$ Codex；AGY 主機／Orchestrator：`implementation`/`scaffolding` $\to$ Codex、`review`/`analysis` $\to$ Claude）並即時負載均衡 | 智慧選型 | 依選用後端 |
 | **並行 Worker Pool** | `delegate_parallel` | 多任務並行批次分發執行，在兩個外部 CLI 之間輪流分配（可自訂並行上限，預設 4） | 智慧選型 | 依選用後端 |
 | **即時配額檢測器** | `get_agent_quotas` | 零 Token 消耗即時讀取三大 CLI 訂閱用量、剩餘百分比與重置時間 | — | 0 Token |
 | **顧問模式諮詢** | `consult_advisor` | 跨供應商唯讀高階顧問諮詢；便宜模型執行、遇難題時請最強模型討論解法（不修改檔案） | AGY `gemini-4-neon` (`xhigh`) / Codex `gpt-6.2-astra` (`max`) / Claude `claude-opus-5-5` (`max`) | 依選用顧問 |

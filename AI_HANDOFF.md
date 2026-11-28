@@ -1,5 +1,17 @@
 # AI handoff
 
+## 2026-11-28 Antigravity：支援 AGY Orchestrator 模式透過 MCP 呼叫 Codex 與 Claude
+
+- 依使用者要求讓 Antigravity（AGY）的 Orchestrator 模式（Plan + Execute）能無縫透過 `agent-delegation` MCP 呼叫 Codex 與 Claude 模型：
+  - **主機感知路由（`DELEGATION_HOST`）**：於 `mcp-server/src/core/defaults.ts` 新增 `getHostAgent`、`getExternalAgents`、`defaultAgentForTaskType`，並將 `isExternalAgent` 改為依主機動態判斷（預設維持 `claude` 以保留既有行為與測試相容性）。在 `DELEGATION_HOST=agy` 下，外部後端為 `codex`（`implementation`/`scaffolding`）與 `claude`（`review`/`analysis`），`delegate_task`、`delegate_parallel` 與 `consult_advisor` 皆優先路由至這兩者，不自動回呼 `agy`。同步更新 `delegate-service.ts` 與 `parallel-service.ts`。
+  - **動態政策與工具描述**：`mcp-server/src/index.ts` 改為 `buildDelegationPolicy(hostAgent)`（加入 `main()` 執行保護以便匯入測試），在 `agy` 主機下附加第 11 條 **AGY Orchestrator Mode (Plan + Execute)** 指引（Plan 階段唯讀諮詢／分析、Execute 階段委派 Codex/Claude 實作與審查）；依主機動態調整 `invoke_agy`/`invoke_codex`/`invoke_claude` 工具描述，並更新 `tools/delegate.ts` 與 `tools/invokers.ts` schema 描述。
+  - **主機註冊與 AGY 權限授權**：`mcp-server/src/register.ts` 為各主機註冊寫入 `DELEGATION_HOST`（AGY `mcp_config.json` 與 IDE `settings.json` 設 `agy`、Claude 設 `claude`、Codex `config.toml` `[mcp_servers.agent_delegation.env]` 設 `codex`），補齊 `registerAntigravitySchemas` 的 13 個工具 schema 與 `instructions.md`，並新增 `registerAntigravityPermissions` 自動將 `agent-delegation` 的 11 項工具加入 `~/.gemini/config/config.json` `userSettings.globalPermissionGrants.allow`（保留既有設定）。
+  - **文件與技能同步**：更新 `skills/agent-delegation-tools/SKILL.md`、`CLAUDE.md`、`README.md`，補充 `DELEGATION_HOST` 與 AGY Orchestrator 模式說明。
+- 驗證：
+  - `mcp-server`：`npm.cmd run lint`、`npm.cmd run build`、`npm.cmd test`（140/140 通過，含新增 `host-orchestrator.test.ts` 與擴充的 `register.test.ts`，涵蓋 `DELEGATION_HOST=agy` 路由、Advisor 容錯切換、stdio MCP `instructions`/工具描述與權限合併）。
+  - 本機註冊與同步：`node .\mcp-server\dist\register.js` 成功寫入 8 個客戶端目標；`install.ps1` 同步 4 份技能副本（SHA-256 驗證通過）；已確認 `~/.gemini/config/mcp_config.json` 含 `DELEGATION_HOST: "agy"`、`~/.gemini/config/config.json` 保留 `orchestratorModel`／`orchestratorExecutorModel` 並新增全部 11 項 `mcp(agent-delegation/...)` 授權。
+  - PowerShell 測試：`tests/run-all.ps1`（10/10 通過）、`validate.ps1`（51 pass / 0 fail / 1 skip）。未以真實收費/額度端到端呼叫實機 Codex/Claude CLI（路由與 stdio MCP 皆以假 CLI 驗證）。既有 Antigravity 對話需重新載入／重連 `agent-delegation` MCP Server 才會套用 `DELEGATION_HOST=agy` 與新版工具指令。
+
 ## 2026-11-26 Antigravity：新增跨供應商顧問模式（Advisor Mode）
 
 - 依使用者要求為 Claude、AGY、Codex 三大主機加入跨供應商「顧問模式」（便宜模型執行、遇難題時以唯讀模式諮詢各家可呼叫的最強模型，突破 Claude 內建顧問僅能呼叫自家模型的限制）：

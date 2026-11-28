@@ -12,6 +12,10 @@ import {
   isDelegationSection,
   isVolatileNodePath,
   findStableNodeOnPath,
+  registerAntigravityGlobal,
+  mergeAntigravityPermissionGrants,
+  registerAntigravityPermissions,
+  ANTIGRAVITY_DELEGATION_PERMISSION_GRANTS,
 } from '../register.js';
 
 describe('Codex MCP Registration & TOML Normalization', () => {
@@ -106,6 +110,8 @@ describe('Codex MCP Registration & TOML Normalization', () => {
       assert.match(block, /^\[mcp_servers\.agent_delegation\]/);
       assert.match(block, /command = "C:\\\\Program Files\\\\nodejs\\\\node\.exe"/);
       assert.match(block, /args = \["C:\/離線儲存\/程式設計\/子代理\/mcp-server\/dist\/index\.js"\]/);
+      assert.match(block, /^\[mcp_servers\.agent_delegation\.env\]$/m);
+      assert.match(block, /^DELEGATION_HOST = "codex"$/m);
     });
   });
 
@@ -280,6 +286,66 @@ locale = "en"`;
       const root = makeAppdata();
       assert.equal(resolveAntigravityUserSettingsPath(root), null);
       fs.rmSync(root, { recursive: true, force: true });
+    });
+  });
+
+  describe('Antigravity DELEGATION_HOST and permission grants', () => {
+    it('registers DELEGATION_HOST=agy in mcp_config.json while preserving existing env', () => {
+      const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-reg-home-'));
+      try {
+        const configPath = path.join(fakeHome, '.gemini', 'config', 'mcp_config.json');
+        fs.mkdirSync(path.dirname(configPath), { recursive: true });
+        fs.writeFileSync(
+          configPath,
+          JSON.stringify({ mcpServers: { 'agent-delegation': { env: { CUSTOM_FLAG: '1' } } } }),
+          'utf8'
+        );
+
+        registerAntigravityGlobal(fakeHome, 'D:/repo/mcp-server/dist/index.js', 'C:\\Program Files\\nodejs\\node.exe');
+        const written = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        assert.equal(written.mcpServers['agent-delegation'].env.DELEGATION_HOST, 'agy');
+        assert.equal(written.mcpServers['agent-delegation'].env.CUSTOM_FLAG, '1');
+      } finally {
+        fs.rmSync(fakeHome, { recursive: true, force: true });
+      }
+    });
+
+    it('merges delegation permission grants idempotently while preserving existing settings', () => {
+      const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-perm-home-'));
+      try {
+        const configPath = path.join(fakeHome, '.gemini', 'config', 'config.json');
+        fs.mkdirSync(path.dirname(configPath), { recursive: true });
+        fs.writeFileSync(
+          configPath,
+          JSON.stringify({
+            userSettings: {
+              orchestratorExecutorModel: 'MODEL_PLACEHOLDER_M526',
+              orchestratorModel: 'MODEL_PLACEHOLDER_M533',
+              globalPermissionGrants: {
+                allow: ['mcp(local_ai/delegate_local)', 'mcp(agent-delegation/invoke_claude)'],
+              },
+            },
+          }),
+          'utf8'
+        );
+
+        registerAntigravityPermissions(fakeHome);
+        registerAntigravityPermissions(fakeHome);
+
+        const written = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        assert.equal(written.userSettings.orchestratorExecutorModel, 'MODEL_PLACEHOLDER_M526');
+        assert.equal(written.userSettings.orchestratorModel, 'MODEL_PLACEHOLDER_M533');
+        const allow: string[] = written.userSettings.globalPermissionGrants.allow;
+        assert.ok(allow.includes('mcp(local_ai/delegate_local)'));
+        for (const grant of ANTIGRAVITY_DELEGATION_PERMISSION_GRANTS) {
+          assert.equal(allow.filter((x) => x === grant).length, 1, `Expected single entry for ${grant}`);
+        }
+
+        const merged = mergeAntigravityPermissionGrants({});
+        assert.deepEqual(merged.userSettings.globalPermissionGrants.allow, [...ANTIGRAVITY_DELEGATION_PERMISSION_GRANTS]);
+      } finally {
+        fs.rmSync(fakeHome, { recursive: true, force: true });
+      }
     });
   });
 });

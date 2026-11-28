@@ -16,7 +16,7 @@
 ## 規則
 
 1. **先委派，不要自己動手。** 多檔案實作、重構、鷹架、批次修改、整個 codebase 的閱讀、寫測試、研究掃描 → 一律走 `mcp__agent-delegation__delegate_task` / `delegate_parallel`。不要為了外部 CLI 做得到的工作去開 Claude 子代理。
-2. **優先用兩個外部 CLI。** `claude` 後端花的是**和父代理同一份**訂閱額度，只省 context 不省額度，所以自動路由永遠不會選它；只有使用者明講、或 `agy` 與 `codex` 都耗盡時才會用到。
+2. **優先用兩個外部 CLI（依主機自動判斷）**。伺服器依 `DELEGATION_HOST` 識別目前主機（`claude` / `agy` / `codex`）：在 Claude 主機上優先用 `agy` 與 `codex`；在 AGY（含 Orchestrator 模式）上優先用 `codex` 與 `claude`；在 Codex 上優先用 `agy` 與 `claude`。與父代理同供應商的後端只省 context 不省額度，自動路由不會選它，只有使用者明講或另兩家皆耗盡時才會用到。
 3. **額度決定路由。** `balance_quota` 預設開啟：派工前會讀三個 CLI 的即時額度（10 秒快取），耗盡的供應商自動跳過並轉移。使用者問「還剩多少額度」時用 `get_agent_quotas`。
 4. **子代理本來就有權限。** `sandbox` 預設 `workspace-write`，寫入模式跳過互動提示。只有 Codex 提供 OS 沙箱；AGY（`--dangerously-skip-permissions`）與 Claude CLI（`bypassPermissions`）不受 `work_dir` 限制，父代理須明確界定修改範圍並審查 diff。只有純分析才傳 `read-only`，分別映射 AGY `plan`／Claude `plan`／Codex `read-only`。
 5. **一定要帶 `work_dir`**（絕對路徑，且目錄必須存在），子代理才會落在正確的 repo。

@@ -32,7 +32,7 @@ export const delegateTaskSchema = z.object({
     .optional()
     .default('implementation')
     .describe(
-      `Task type guiding routing and model defaults: analysis/scaffolding -> AGY (${DEFAULT_MODELS.agy.model} ${DEFAULT_MODELS.agy.effort}), implementation/review -> Codex (${DEFAULT_MODELS.codex.model} ${DEFAULT_MODELS.codex.effort}). The Claude CLI is never auto-selected because it spends the parent agent's own subscription quota.`
+      `Task type guiding routing and model defaults across external (non-host) CLIs: on Claude hosts, analysis/scaffolding -> AGY (${DEFAULT_MODELS.agy.model} ${DEFAULT_MODELS.agy.effort}) and implementation/review -> Codex (${DEFAULT_MODELS.codex.model} ${DEFAULT_MODELS.codex.effort}); on AGY hosts (DELEGATION_HOST=agy), implementation/scaffolding -> Codex and review/analysis -> Claude (${DEFAULT_MODELS.claude.model} ${DEFAULT_MODELS.claude.effort}). The host's own provider is never auto-selected.`
     ),
   sandbox: z
     .enum(['read-only', 'workspace-write', 'danger-full-access'])
@@ -50,7 +50,7 @@ export const delegateTaskSchema = z.object({
     .enum(['auto', 'codex', 'claude', 'agy'])
     .optional()
     .default('auto')
-    .describe('Primary agent backend. Defaults to "auto": routes by task_type and live quota health, preferring the two external CLIs (agy, codex). Pass "claude" explicitly to force the Claude CLI.'),
+    .describe('Primary agent backend. Defaults to "auto": routes by task_type and live quota health across the two external (non-host) CLIs (e.g., agy+codex on Claude hosts, codex+claude on AGY hosts). Pass a provider name explicitly to pin it.'),
   fallback_agent: z
     .enum(['codex', 'claude', 'agy', 'none'])
     .optional()
@@ -185,7 +185,7 @@ export const delegateParallelSchema = z.object({
     .optional()
     .default('implementation')
     .describe(
-      `Task type guiding routing and model defaults: analysis/scaffolding -> AGY (${DEFAULT_MODELS.agy.model} ${DEFAULT_MODELS.agy.effort}), implementation/review -> Codex (${DEFAULT_MODELS.codex.model} ${DEFAULT_MODELS.codex.effort}). The Claude CLI is never auto-selected because it spends the parent agent's own subscription quota.`
+      `Task type guiding routing and model defaults across external (non-host) CLIs: on Claude hosts, analysis/scaffolding -> AGY (${DEFAULT_MODELS.agy.model} ${DEFAULT_MODELS.agy.effort}) and implementation/review -> Codex (${DEFAULT_MODELS.codex.model} ${DEFAULT_MODELS.codex.effort}); on AGY hosts (DELEGATION_HOST=agy), implementation/scaffolding -> Codex and review/analysis -> Claude (${DEFAULT_MODELS.claude.model} ${DEFAULT_MODELS.claude.effort}). The host's own provider is never auto-selected.`
     ),
   sandbox: z
     .enum(['read-only', 'workspace-write', 'danger-full-access'])

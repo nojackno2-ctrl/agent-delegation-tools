@@ -3,7 +3,7 @@ import { getDynamicQuotaHealth, markProviderDepleted, markProviderUnavailable } 
 import { invokeAgy } from '../invokers/agy-invoker.js';
 import { invokeCodex } from '../invokers/codex-invoker.js';
 import { invokeClaude } from '../invokers/claude-invoker.js';
-import { codexLocalProfile, DEFAULT_SANDBOX, isExternalAgent, isWriteSandbox } from '../../core/defaults.js';
+import { codexLocalProfile, defaultAgentForTaskType, DEFAULT_SANDBOX, isExternalAgent, isWriteSandbox } from '../../core/defaults.js';
 import { writeRunLog, generateRunId, truncateTail } from '../../core/logging.js';
 
 export interface DelegateOptions {
@@ -36,22 +36,7 @@ export async function delegateTask(options: DelegateOptions): Promise<ExecutionR
   // same subscription as the parent agent, so delegating to it offloads context
   // but not quota; it is reachable only by naming it explicitly.
   const explicitAgent = options.agent && options.agent !== 'auto' ? options.agent : null;
-  let primaryAgent: AgentName;
-  if (explicitAgent) {
-    primaryAgent = explicitAgent;
-  } else {
-    switch (taskType) {
-      case 'implementation':
-      case 'review':
-        primaryAgent = 'codex';
-        break;
-      case 'analysis':
-      case 'scaffolding':
-      default:
-        primaryAgent = 'agy';
-        break;
-    }
-  }
+  let primaryAgent: AgentName = explicitAgent ?? defaultAgentForTaskType(taskType);
 
   const fallbackChain: AgentName[] = [];
   if (options.signal?.aborted) {
@@ -84,7 +69,7 @@ export async function delegateTask(options: DelegateOptions): Promise<ExecutionR
       };
 
       const available = (Object.keys(healthMap) as AgentName[]).filter((a) => healthMap[a].available);
-      const externalsUsable = available.some(isExternalAgent);
+      const externalsUsable = available.some((a) => isExternalAgent(a));
 
       // The Claude CLI joins the chain only when it was named explicitly or when
       // neither external CLI is usable.

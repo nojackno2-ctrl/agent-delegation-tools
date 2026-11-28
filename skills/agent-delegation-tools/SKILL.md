@@ -21,8 +21,18 @@ An always-on, passive subagent delegation and load-balancing framework on Window
 4. **Parent Coordination & Verification**:
    The parent agent remains responsible for defining clear task bounds, setting child models/effort, reviewing git status and diffs after subagents complete, running verification/tests, and presenting synthesized results.
 
-5. **External CLIs Carry the Load**:
-   Route work to AGY and Codex. The Claude CLI child spends the *same* subscription quota as the parent agent, so it offloads context but not quota; use it only when the user asks for it by name, or when AGY and Codex are both depleted.
+5. **External CLIs Carry the Load (Host-Aware via `DELEGATION_HOST`)**:
+   The MCP server sets `DELEGATION_HOST` per host (`agy`, `codex`, or `claude`). Auto-routing (`delegate_task`, `delegate_parallel`, `consult_advisor`) always prefers the two external CLIs that do not share the parent host's subscription quota:
+   - **Antigravity (AGY) host (`DELEGATION_HOST=agy`)**, including **AGY Orchestrator mode**: routes across **Codex** (`implementation`, `scaffolding`) and **Claude** (`review`, `analysis`); uses `agy` only when explicitly named or when both Codex and Claude are depleted.
+   - **Codex host (`DELEGATION_HOST=codex`)**: routes across **AGY** (`analysis`, `scaffolding`) and **Claude** (`implementation`, `review`).
+   - **Claude host (`DELEGATION_HOST=claude`, default)**: routes across **AGY** (`analysis`, `scaffolding`) and **Codex** (`implementation`, `review`); uses `claude` only when explicitly named or when AGY and Codex are both depleted.
+
+### AGY Orchestrator Mode (Plan + Execute)
+
+When running inside Antigravity's Orchestrator mode (`DELEGATION_HOST=agy`), both the **Plan** and **Execute** phases can leverage Codex and Claude through `agent-delegation`:
+
+- **Plan phase (read-only)**: Call `consult_advisor` (`readOnlyHint=true`; defaults to Codex `gpt-6.2-astra` `max` or Claude `claude-opus-5-5` `max`) or `delegate_task(sandbox="read-only", agent="codex"|"claude")` for cross-provider architecture advice, second opinions, or codebase analysis without modifying files. Write execution plans that explicitly assign implementation, review, or parallel steps to Codex (`delegate_task` / `invoke_codex`) and Claude (`delegate_task` / `invoke_claude`) when appropriate.
+- **Execute phase (write-capable)**: Carry out delegated steps via `delegate_task`, `delegate_parallel`, `invoke_codex`, `invoke_claude`, and `consult_advisor` (polling `get_job_result` for async jobs), then verify diffs and tests before handing back `[plan review]`.
 
 ## Default child models
 
@@ -56,7 +66,7 @@ The `agent-delegation` MCP server applies these same defaults automatically, so 
 
 ## MCP-First Discovery & Tool Routing
 
-1. **Early MCP Discovery**: In Codex and other MCP-enabled environments, first search deferred/lazy tools for all nine tools: `get_agent_quotas`, `delegate_task`, `delegate_parallel`, `invoke_agy`, `invoke_codex`, `invoke_claude`, `get_job_status`, `get_job_result`, `cancel_job` (including `ALL_TOOLS` / tool search when available).
+1. **Early MCP Discovery**: In Codex and other MCP-enabled environments, first search deferred/lazy tools for all 13 tools: `get_agent_quotas`, `delegate_task`, `delegate_parallel`, `invoke_agy`, `invoke_codex`, `invoke_claude`, `consult_advisor`, `configure_advisor`, `get_job_status`, `get_job_result`, `cancel_job`, `invoke_local`, `list_local_models` (including `ALL_TOOLS` / tool search when available).
 2. **Single Canonical Namespace**: Use exactly one connected `agent_delegation` namespace (`[mcp_servers.agent_delegation]`). Never mix or duplicate with legacy hyphenated aliases.
 3. **PowerShell Wrapper Fallback**: Only fall back to invoking the PowerShell wrappers (`delegate.ps1`, `status.ps1`, etc.) after tool search conclusively proves no host MCP server is connected.
 4. **Codex Sandbox Diagnostic Warning**: Running `codex mcp list` inside `CodexSandboxOffline` reads the sandbox home (`~/.codex/config.toml` inside the sandbox environment) and cannot diagnose or inspect the parent Desktop host registry. Host MCP tools are bridged from the parent host environment; do not mistake sandbox CLI output for host MCP disconnection.

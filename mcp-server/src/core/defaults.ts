@@ -1,4 +1,4 @@
-import { AgentName, SandboxMode } from './types.js';
+import { AgentName, SandboxMode, TaskType } from './types.js';
 
 /** Text-only local backend; deliberately excluded from AgentName and auto-routing. */
 export const DEFAULT_LOCAL_MODEL = process.env.LOCAL_AI_MODEL?.trim() || 'laguna-xs-2.1:latest';
@@ -51,15 +51,78 @@ export const ADVISOR_MODELS = {
 export const DEFAULT_SANDBOX: SandboxMode = 'workspace-write';
 
 /**
- * Auto-routing preference. The two external providers carry the load; the
- * Claude CLI spends the same subscription quota as the parent agent, so it is
- * the last resort unless the caller names it explicitly.
+ * Host agent running this MCP server, read from DELEGATION_HOST.
+ * Defaults to 'claude' for backward compatibility.
+ */
+export function getHostAgent(env: NodeJS.ProcessEnv = process.env): AgentName {
+  const raw = env.DELEGATION_HOST?.trim().toLowerCase();
+  if (raw === 'agy' || raw === 'codex' || raw === 'claude') {
+    return raw;
+  }
+  return 'claude';
+}
+
+/**
+ * External CLI backends (the two providers that do NOT share the host's own
+ * subscription quota).
+ */
+export function getExternalAgents(host: AgentName = getHostAgent()): AgentName[] {
+  switch (host) {
+    case 'agy':
+      return ['codex', 'claude'];
+    case 'codex':
+      return ['agy', 'claude'];
+    case 'claude':
+    default:
+      return ['agy', 'codex'];
+  }
+}
+
+/**
+ * Auto-routing preference for Claude hosts (kept for backward compatibility).
  */
 export const EXTERNAL_AGENTS: AgentName[] = ['agy', 'codex'];
 
-/** True when the backend is one of the two external (non-Claude-quota) CLIs. */
-export function isExternalAgent(agent: AgentName): boolean {
-  return EXTERNAL_AGENTS.includes(agent);
+/** True when the backend is one of the two external (non-host-quota) CLIs. */
+export function isExternalAgent(agent: AgentName, host: AgentName = getHostAgent()): boolean {
+  return getExternalAgents(host).includes(agent);
+}
+
+/** Default primary agent for a task_type given the active host agent. */
+export function defaultAgentForTaskType(taskType: TaskType, host: AgentName = getHostAgent()): AgentName {
+  switch (host) {
+    case 'agy':
+      switch (taskType) {
+        case 'implementation':
+        case 'scaffolding':
+          return 'codex';
+        case 'review':
+        case 'analysis':
+        default:
+          return 'claude';
+      }
+    case 'codex':
+      switch (taskType) {
+        case 'analysis':
+        case 'scaffolding':
+          return 'agy';
+        case 'implementation':
+        case 'review':
+        default:
+          return 'claude';
+      }
+    case 'claude':
+    default:
+      switch (taskType) {
+        case 'implementation':
+        case 'review':
+          return 'codex';
+        case 'analysis':
+        case 'scaffolding':
+        default:
+          return 'agy';
+      }
+  }
 }
 
 /** Sandboxes that imply the subagent may create/modify files. */

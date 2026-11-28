@@ -7,7 +7,10 @@ import { getAgentQuotasSchema } from './tools/quota.js';
 import { delegateTaskSchema, delegateParallelSchema } from './tools/delegate.js';
 import { invokeAgySchema, invokeCodexSchema, invokeClaudeSchema } from './tools/invokers.js';
 import { configureAdvisorSchema, consultAdvisorSchema } from './tools/advisor.js';
-import { ADVISOR_MODELS } from './core/defaults.js';
+import { getJobStatusSchema, getJobResultSchema, cancelJobSchema } from './tools/jobs.js';
+import { invokeLocalSchema, listLocalModelsSchema } from './tools/local.js';
+import { ADVISOR_MODELS, DEFAULT_LOCAL_MODEL, DEFAULT_MODELS } from './core/defaults.js';
+import { buildDelegationPolicy } from './index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -50,7 +53,7 @@ export const tools = [
   {
     name: 'invoke_claude',
     description:
-      'Directly invoke the Anthropic Claude CLI subagent (claude-sonnet-5-5, effort low) with token-isolated context (--safe-mode) and session resume. Last resort: it spends the same subscription quota as the parent agent, so prefer invoke_agy / invoke_codex.',
+      `Directly invoke the Anthropic Claude CLI subagent (${DEFAULT_MODELS.claude.model}, effort ${DEFAULT_MODELS.claude.effort}) with token-isolated context (--safe-mode) and session resume.`,
     schema: invokeClaudeSchema,
   },
   {
@@ -64,6 +67,31 @@ export const tools = [
     description:
       'View or set the active session Advisor provider/model/effort used by consult_advisor (auto|agy|codex|claude). Call with no arguments to inspect current settings and strongest defaults.',
     schema: configureAdvisorSchema,
+  },
+  {
+    name: 'get_job_status',
+    description: 'Get brief job status; omit job_id to list retained jobs.',
+    schema: getJobStatusSchema,
+  },
+  {
+    name: 'get_job_result',
+    description: 'Poll a job for status and result; wait_sec defaults to 25, maximum 50 seconds. Repeat while running.',
+    schema: getJobResultSchema,
+  },
+  {
+    name: 'cancel_job',
+    description: 'Abort a running job and terminate its child process tree.',
+    schema: cancelJobSchema,
+  },
+  {
+    name: 'invoke_local',
+    description: `Run a bounded task with local Ollama (${DEFAULT_LOCAL_MODEL}); zero cloud quota.`,
+    schema: invokeLocalSchema,
+  },
+  {
+    name: 'list_local_models',
+    description: 'List allowed installed and loaded Ollama models, default model, address and reachability. No cloud calls.',
+    schema: listLocalModelsSchema,
   },
 ];
 
@@ -188,7 +216,7 @@ export const HOST_TOOL_TIMEOUT_SEC = 86_400;
 export function buildCodexTomlSection(nodePath: string, serverPath: string): string {
   const nodeToml = JSON.stringify(nodePath);
   const serverToml = JSON.stringify(serverPath);
-  return `[mcp_servers.agent_delegation]\ncommand = ${nodeToml}\nargs = [${serverToml}]\ntool_timeout_sec = ${HOST_TOOL_TIMEOUT_SEC}`;
+  return `[mcp_servers.agent_delegation]\ncommand = ${nodeToml}\nargs = [${serverToml}]\ntool_timeout_sec = ${HOST_TOOL_TIMEOUT_SEC}\n\n[mcp_servers.agent_delegation.env]\nDELEGATION_HOST = "codex"`;
 }
 
 export function updateCodexToml(
@@ -236,9 +264,14 @@ export function registerAntigravityGlobal(home: string, serverPath: string, node
       config = { mcpServers: {} };
     }
   }
+  const existingEnv = config.mcpServers['agent-delegation']?.env;
   config.mcpServers['agent-delegation'] = {
     command: nodePath,
     args: [serverPath],
+    env: {
+      ...(existingEnv && typeof existingEnv === 'object' ? existingEnv : {}),
+      DELEGATION_HOST: 'agy',
+    },
   };
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
   console.log(`[OK] Antigravity Global MCP: ${configPath}`);
@@ -268,19 +301,56 @@ export function registerAntigravitySchemas(home: string) {
   }
 
   const instructionsPath = path.join(mcpDir, 'instructions.md');
-  const instructionsContent = `# Agent Delegation MCP Server
-
-Standard Model Context Protocol (MCP) tool suite for subagent delegation and quota-aware load balancing across Antigravity CLI, Codex CLI, and Claude Code.
-
-## Best Practices & Guidelines
-
-1. **Quota Inspection Before Heavy Tasks**: Call \`get_agent_quotas\` before launching large or batch delegations to verify provider health and remaining quotas.
-2. **Intelligent Routing**: Use \`delegate_task\` with \`task_type: "analysis"\` for fast Gemini Flash analysis, \`task_type: "implementation"\` for Codex multi-file changes, and \`task_type: "review"\` for Claude security and logical audits.
-3. **Workspace Permissions**: Always specify \`sandbox: "workspace-write"\` when delegating code edits, bug fixes, or file creations.
-4. **Concurrency & Parallelism**: Use \`delegate_parallel\` to dispatch multiple independent tasks simultaneously.
-`;
-  fs.writeFileSync(instructionsPath, instructionsContent, 'utf8');
+  fs.writeFileSync(instructionsPath, buildDelegationPolicy('agy') + '\n', 'utf8');
   console.log(`[OK] Antigravity Tool Schemas: ${mcpDir}`);
+}
+
+export const ANTIGRAVITY_DELEGATION_PERMISSION_GRANTS: readonly string[] = [
+  'mcp(agent-delegation/delegate_task)',
+  'mcp(agent-delegation/delegate_parallel)',
+  'mcp(agent-delegation/invoke_codex)',
+  'mcp(agent-delegation/invoke_claude)',
+  'mcp(agent-delegation/invoke_agy)',
+  'mcp(agent-delegation/consult_advisor)',
+  'mcp(agent-delegation/configure_advisor)',
+  'mcp(agent-delegation/get_agent_quotas)',
+  'mcp(agent-delegation/get_job_status)',
+  'mcp(agent-delegation/get_job_result)',
+  'mcp(agent-delegation/cancel_job)',
+];
+
+export function mergeAntigravityPermissionGrants(config: any): any {
+  const next = config && typeof config === 'object' ? { ...config } : {};
+  const userSettings = next.userSettings && typeof next.userSettings === 'object' ? { ...next.userSettings } : {};
+  const grants =
+    userSettings.globalPermissionGrants && typeof userSettings.globalPermissionGrants === 'object'
+      ? { ...userSettings.globalPermissionGrants }
+      : {};
+  const existingAllow = Array.isArray(grants.allow) ? [...grants.allow] : [];
+
+  for (const grant of ANTIGRAVITY_DELEGATION_PERMISSION_GRANTS) {
+    if (!existingAllow.includes(grant)) {
+      existingAllow.push(grant);
+    }
+  }
+
+  grants.allow = existingAllow;
+  userSettings.globalPermissionGrants = grants;
+  next.userSettings = userSettings;
+  return next;
+}
+
+export function registerAntigravityPermissions(home: string) {
+  const configPath = path.join(home, '.gemini', 'config', 'config.json');
+  if (!fs.existsSync(configPath)) return;
+  try {
+    const original = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const updated = mergeAntigravityPermissionGrants(original);
+    fs.writeFileSync(configPath, JSON.stringify(updated, null, 2), 'utf8');
+    console.log(`[OK] Antigravity Permission Grants: ${configPath}`);
+  } catch (e: any) {
+    console.warn(`[WARN] Failed to update ${configPath}: ${e.message}`);
+  }
 }
 
 /**
@@ -308,9 +378,14 @@ export function registerAntigravityUserSettings(appdata: string, serverPath: str
       } catch {}
     }
     if (!settings['mcp.servers']) settings['mcp.servers'] = {};
+    const existingEnv = settings['mcp.servers']['agent-delegation']?.env;
     settings['mcp.servers']['agent-delegation'] = {
       command: nodePath,
       args: [serverPath],
+      env: {
+        ...(existingEnv && typeof existingEnv === 'object' ? existingEnv : {}),
+        DELEGATION_HOST: 'agy',
+      },
     };
     fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 4), 'utf8');
     console.log(`[OK] Antigravity User Settings: ${settingsPath}`);
@@ -329,9 +404,14 @@ export function registerClaudeDesktop(appdata: string, serverPath: string, nodeP
       config = { mcpServers: {} };
     }
   }
+  const existingEnv = config.mcpServers['agent-delegation']?.env;
   config.mcpServers['agent-delegation'] = {
     command: nodePath,
     args: [serverPath],
+    env: {
+      ...(existingEnv && typeof existingEnv === 'object' ? existingEnv : {}),
+      DELEGATION_HOST: 'claude',
+    },
   };
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
   console.log(`[OK] Claude Desktop: ${configPath}`);
@@ -343,9 +423,14 @@ export function registerClaudeCli(home: string, serverPath: string, nodePath: st
     try {
       const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       if (!config.mcpServers) config.mcpServers = {};
+      const existingEnv = config.mcpServers['agent-delegation']?.env;
       config.mcpServers['agent-delegation'] = {
         command: nodePath,
         args: [serverPath],
+        env: {
+          ...(existingEnv && typeof existingEnv === 'object' ? existingEnv : {}),
+          DELEGATION_HOST: 'claude',
+        },
       };
       fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
       console.log(`[OK] Claude Code CLI: ${configPath}`);
@@ -400,6 +485,7 @@ export function registerAll(nodePath: string = resolveNodePath()) {
 
   registerAntigravityGlobal(home, serverIndexPath, nodePath);
   registerAntigravitySchemas(home);
+  registerAntigravityPermissions(home);
   registerAntigravityUserSettings(appdata, serverIndexPath, nodePath);
   registerClaudeDesktop(appdata, serverIndexPath, nodePath);
   registerClaudeCli(home, serverIndexPath, nodePath);

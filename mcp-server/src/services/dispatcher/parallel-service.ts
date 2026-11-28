@@ -1,6 +1,6 @@
 import { AgentName, TargetAgent, FallbackAgent, TaskType, SandboxMode, EXIT_CODES, DelegationAttempt } from '../../core/types.js';
 import { delegateTask } from './delegate-service.js';
-import { EXTERNAL_AGENTS } from '../../core/defaults.js';
+import { getExternalAgents } from '../../core/defaults.js';
 import { capOutputTail, generateRunId } from '../../core/logging.js';
 
 export interface ParallelTaskOptions {
@@ -45,6 +45,7 @@ export async function delegateParallel(options: ParallelTaskOptions): Promise<Pa
   // one provider does not absorb the whole burst. delegateTask still fails over
   // per task when the assigned backend turns out to be depleted.
   const autoSpread = !options.agent || options.agent === 'auto';
+  const externalAgents = getExternalAgents();
 
   async function worker() {
     while (currentIndex < options.tasks.length && !options.signal?.aborted) {
@@ -57,7 +58,7 @@ export async function delegateParallel(options: ParallelTaskOptions): Promise<Pa
         taskType: options.taskType,
         sandbox: options.sandbox,
         balanceQuota: options.balanceQuota !== false,
-        agent: autoSpread ? EXTERNAL_AGENTS[idx % EXTERNAL_AGENTS.length] : options.agent,
+        agent: autoSpread ? externalAgents[idx % externalAgents.length] : options.agent,
         fallbackAgent: options.fallbackAgent,
         workDir: options.workDir,
         timeoutSec: options.timeoutSec,
@@ -93,7 +94,7 @@ export async function delegateParallel(options: ParallelTaskOptions): Promise<Pa
     if (!results[idx]) results[idx] = {
       index: idx,
       prompt: options.tasks[idx].slice(0, 120),
-      usedAgent: autoSpread ? EXTERNAL_AGENTS[idx % EXTERNAL_AGENTS.length] : (options.agent as AgentName || 'agy'),
+      usedAgent: autoSpread ? externalAgents[idx % externalAgents.length] : (options.agent as AgentName || 'agy'),
       exitCode: EXIT_CODES.CANCELLED,
       output: 'Task cancelled before dispatch.',
       durationMs: 0,

@@ -1,4 +1,6 @@
 import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { jobRegistry } from './services/jobs/job-registry.js';
 import { createProgressReporter } from './tools/execution.js';
 import { getJobStatusSchema, getJobResultSchema, cancelJobSchema, handleGetJobStatus, handleGetJobResult, handleCancelJob } from './tools/jobs.js';
@@ -11,7 +13,8 @@ import {
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import { DEFAULT_MODELS, ADVISOR_MODELS, DEFAULT_LOCAL_MODEL } from './core/defaults.js';
+import { DEFAULT_MODELS, ADVISOR_MODELS, DEFAULT_LOCAL_MODEL, getHostAgent, getExternalAgents } from './core/defaults.js';
+import { AgentName } from './core/types.js';
 import { invokeLocalSchema, listLocalModelsSchema, handleInvokeLocal, handleListLocalModels } from './tools/local.js';
 import {
   configureAdvisorSchema,
@@ -46,7 +49,20 @@ const SERVER_VERSION: string = pkg.version || '1.1.0';
  * Sent to the host agent on connect. This is the contract that makes the parent
  * a dispatcher rather than a worker.
  */
-const DELEGATION_POLICY = `Delegation-first policy for this workspace.
+export function buildDelegationPolicy(hostAgent: AgentName = getHostAgent()): string {
+  const [ext1, ext2] = getExternalAgents(hostAgent);
+  const hostLabel =
+    hostAgent === 'agy' ? 'Antigravity (AGY)' : hostAgent === 'codex' ? 'Codex' : 'Claude';
+
+  const orchestratorRule =
+    hostAgent === 'agy'
+      ? `
+11. AGY Orchestrator Mode (Plan + Execute):
+    - Plan phase (read-only): Use consult_advisor (readOnlyHint=true; defaults to Codex ${ADVISOR_MODELS.codex.model} ${ADVISOR_MODELS.codex.effort} or Claude ${ADVISOR_MODELS.claude.model} ${ADVISOR_MODELS.claude.effort}) or delegate_task(sandbox="read-only", agent="codex"|"claude") for cross-provider architecture advice, second opinions, or codebase analysis without modifying files. Write execution plans that explicitly assign implementation, review, or parallel steps to Codex (delegate_task / invoke_codex) and Claude (delegate_task / invoke_claude) when appropriate.
+    - Execute phase (write-capable): Carry out delegated steps via delegate_task, delegate_parallel, invoke_codex, invoke_claude, and consult_advisor (polling get_job_result for async jobs), then verify diffs and tests before handing back [plan review].`
+      : '';
+
+  return `Delegation-first policy for this workspace (active host: ${hostLabel}).
 
 The parent agent is a dispatcher. Real work belongs to the three subscription
 CLIs and a local backend behind these tools:
@@ -59,12 +75,12 @@ CLIs and a local backend behind these tools:
 Rules:
 1. Delegate instead of doing it yourself. Multi-file implementation, refactors,
    scaffolding, bulk edits, whole-codebase reading, test writing, and research
-   sweeps go through delegate_task / delegate_parallel. Do not spawn Claude
-   subagents for work an external CLI can do.
-2. Prefer the external CLIs. The claude backend spends the SAME subscription
-   quota as the parent, so it offloads context but not quota; auto-routing never
-   picks it. Reach for it only when explicitly asked or when agy and codex are
-   both depleted.
+   sweeps go through delegate_task / delegate_parallel. Prefer external CLIs over
+   in-host subagents for work an external CLI can do.
+2. Prefer the external CLIs (${ext1}, ${ext2}). The ${hostAgent} backend spends
+   the SAME subscription quota as the parent (${hostLabel}) host, so it offloads
+   context but not quota; auto-routing never picks ${hostAgent}. Reach for ${hostAgent}
+   only when explicitly asked or when ${ext1} and ${ext2} are both depleted.
 3. Let quota drive routing. balance_quota is on by default: live quotas for all
    three CLIs are read before dispatch (10s cache) and a depleted provider is
    skipped and failed over automatically. Call get_agent_quotas when the user
@@ -76,7 +92,7 @@ Rules:
    skip permission prompts and are NOT confined to work_dir.
 5. Always pass work_dir (absolute path) so the subagent lands in the right repo.
 6. Batch independent units through delegate_parallel; it spreads them round-robin
-   across the external CLIs with per-task quota failover.
+   across the external CLIs (${ext1}, ${ext2}) with per-task quota failover.
 7. Async flow: delegate_task and delegate_parallel default to async=true, returning
    a job_id immediately. Poll get_job_result(job_id, wait_sec=25) until finished.
    invoke_* defaults to async=false for synchronous work; pass async=true for
@@ -95,12 +111,13 @@ Rules:
     executor model and hitting a hard bug, architectural decision, or design impasse,
     consult a top-tier Advisor model in read-only mode via consult_advisor without
     handing off file edits. Works across Claude, AGY, and Codex hosts (including
-    Claude consulting AGY or Codex). Strongest callable defaults:
+    AGY consulting Codex or Claude, and Claude consulting AGY or Codex). Strongest callable defaults:
       - agy    -> ${ADVISOR_MODELS.agy.model} (effort ${ADVISOR_MODELS.agy.effort})
       - codex  -> ${ADVISOR_MODELS.codex.model} (effort ${ADVISOR_MODELS.codex.effort})
       - claude -> ${ADVISOR_MODELS.claude.model} (effort ${ADVISOR_MODELS.claude.effort})
     Use configure_advisor to inspect or pin the session's active advisor provider
-    (auto|agy|codex|claude). consult_advisor defaults to async=true; poll get_job_result.`;
+    (auto|agy|codex|claude). consult_advisor defaults to async=true; poll get_job_result.${orchestratorRule}`;
+}
 
 // Helper to convert Zod schema to clean JSON Schema for MCP tools
 function toToolSchema(zodSchema: any) {
@@ -114,6 +131,8 @@ function toToolSchema(zodSchema: any) {
 }
 
 async function main() {
+  const hostAgent = getHostAgent();
+  const [ext1, ext2] = getExternalAgents(hostAgent);
   const server = new Server(
     {
       name: 'agent-delegation-mcp-server',
@@ -123,7 +142,7 @@ async function main() {
       capabilities: {
         tools: {},
       },
-      instructions: DELEGATION_POLICY,
+      instructions: buildDelegationPolicy(hostAgent),
     }
   );
 
@@ -185,21 +204,21 @@ async function main() {
         {
           name: 'invoke_agy',
           description:
-            `Defaults to synchronous; set async=true for long work and poll get_job_result. Directly invoke the Google Antigravity (AGY) CLI subagent. Defaults: ${DEFAULT_MODELS.agy.model}, effort ${DEFAULT_MODELS.agy.effort}, accept-edits mode with permission prompts skipped.`,
+            `Defaults to synchronous; set async=true for long work and poll get_job_result. Directly invoke the Google Antigravity (AGY) CLI subagent. Defaults: ${DEFAULT_MODELS.agy.model}, effort ${DEFAULT_MODELS.agy.effort}, accept-edits mode with permission prompts skipped.${hostAgent === 'agy' ? ` Last resort: it spends the same subscription quota as the parent agent, so prefer ${ext1} / ${ext2}.` : ''}`,
           inputSchema: toToolSchema(invokeAgySchema),
           annotations: { readOnlyHint: false, destructiveHint: false },
         },
         {
           name: 'invoke_codex',
           description:
-            `Defaults to synchronous; set async=true for long work and poll get_job_result. Directly invoke the OpenAI Codex CLI subagent. Defaults: ${DEFAULT_MODELS.codex.model}, effort ${DEFAULT_MODELS.codex.effort}, workspace-write sandbox with approvals auto-handled. Handles non-ASCII Windows paths via junction aliases.`,
+            `Defaults to synchronous; set async=true for long work and poll get_job_result. Directly invoke the OpenAI Codex CLI subagent. Defaults: ${DEFAULT_MODELS.codex.model}, effort ${DEFAULT_MODELS.codex.effort}, workspace-write sandbox with approvals auto-handled. Handles non-ASCII Windows paths via junction aliases.${hostAgent === 'codex' ? ` Last resort: it spends the same subscription quota as the parent agent, so prefer ${ext1} / ${ext2}.` : ''}`,
           inputSchema: toToolSchema(invokeCodexSchema),
           annotations: { readOnlyHint: false, destructiveHint: false },
         },
         {
           name: 'invoke_claude',
           description:
-            `Defaults to synchronous; set async=true for long work and poll get_job_result. Directly invoke the Anthropic Claude CLI subagent (${DEFAULT_MODELS.claude.model}, effort ${DEFAULT_MODELS.claude.effort}) with token-isolated context (--safe-mode) and session resume. Last resort: it spends the same subscription quota as the parent agent, so prefer invoke_agy / invoke_codex.`,
+            `Defaults to synchronous; set async=true for long work and poll get_job_result. Directly invoke the Anthropic Claude CLI subagent (${DEFAULT_MODELS.claude.model}, effort ${DEFAULT_MODELS.claude.effort}) with token-isolated context (--safe-mode) and session resume.${hostAgent === 'claude' ? ` Last resort: it spends the same subscription quota as the parent agent, so prefer invoke_agy / invoke_codex.` : ''}`,
           inputSchema: toToolSchema(invokeClaudeSchema),
           annotations: { readOnlyHint: false, destructiveHint: false },
         },
@@ -305,7 +324,9 @@ async function main() {
   await server.connect(transport);
 }
 
-main().catch((err) => {
-  console.error('Fatal MCP Server error:', err);
-  process.exit(1);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    console.error('Fatal MCP Server error:', err);
+    process.exit(1);
+  });
+}

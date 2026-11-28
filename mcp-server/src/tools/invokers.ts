@@ -160,7 +160,7 @@ export const invokeClaudeSchema = z.object({
     .optional()
     .default(DEFAULT_SANDBOX)
     .describe(
-      'Permission mode. Defaults to workspace-write, which runs the headless child unattended (no permission prompts) inside work_dir. Note: this backend spends the same Claude subscription quota as the parent, so prefer invoke_agy / invoke_codex.'
+      "Permission mode. Defaults to workspace-write, which runs the headless child unattended (no permission prompts) inside work_dir. The host's own provider shares subscription quota with the parent; under AGY (DELEGATION_HOST=agy), both Codex and Claude are external providers."
     ),
   context: z
     .enum(['isolated', 'project'])
